@@ -324,6 +324,23 @@ button, select, input, label { font-family: inherit; }
   touch-action: none;
 }
 
+/* floating "swap image" chip over the preview */
+.px-swap-btn {
+  -webkit-tap-highlight-color: transparent;
+  position: absolute; top: 10px; inset-inline-start: 10px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 13px; min-height: 38px;
+  border-radius: 999px; cursor: pointer;
+  background: rgba(20, 21, 25, 0.72);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  border: 1px solid var(--border-strong);
+  color: var(--text); font-size: 12.5px; font-weight: 500;
+  box-shadow: var(--shadow-1);
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.px-swap-btn:hover { border-color: var(--brand); background: rgba(20, 21, 25, 0.88); }
+.px-swap-btn:active { transform: scale(0.95); }
+
 /* ---------- micro animations ---------- */
 @keyframes px-in {
   from { opacity: 0; transform: translateY(6px); }

@@ -611,14 +611,17 @@ export default function Editor() {
 
   const previewBlock = (
     <>
-      <div
-        ref={containerRef}
-        onPointerDown={onPtrDown} onPointerMove={onPtrMove} onPointerUp={onPtrUp}
-        onPointerCancel={onPtrUp} onWheel={onWheel}
-        className="px-canvas-frame"
-        style={{ cursor: revealing ? "default" : pZoom > 1 ? "grab" : "zoom-in" }}
-      >
-        <canvas ref={canvasRef} style={{ display: "block" }} />
+      <div style={{ position: "relative", width: "fit-content", maxWidth: "100%" }}>
+        <div
+          ref={containerRef}
+          onPointerDown={onPtrDown} onPointerMove={onPtrMove} onPointerUp={onPtrUp}
+          onPointerCancel={onPtrUp} onWheel={onWheel}
+          className="px-canvas-frame"
+          style={{ cursor: revealing ? "default" : pZoom > 1 ? "grab" : "zoom-in" }}
+        >
+          <canvas ref={canvasRef} style={{ display: "block" }} />
+        </div>
+        <label htmlFor="pbx-file" className="px-swap-btn"><IcUpload />החלף תמונה</label>
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 760 }}>
         <span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>זום {pZoom.toFixed(1)}×</span>
