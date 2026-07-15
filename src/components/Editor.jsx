@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { PALETTE, BOARD, BOARD_CM, iconUrl, textureUrl } from "../lib/palette.js";
 import { quantize, renderGrid } from "../lib/bricks.js";
 import { buildInstructionsPdf, bytesToDataUrl } from "../lib/pdf.js";
-import RoomScene, { ROOMS, WALL_H } from "./RoomScene.jsx";
+import RoomScene, { ROOMS, WALL_H, WALL_W } from "./RoomScene.jsx";
 
 export default function Editor() {
   const [img, setImg] = useState(null);
@@ -19,10 +19,15 @@ export default function Editor() {
   const [counts, setCounts] = useState(null);
   const [drag, setDrag] = useState(false);
   const [view, setView] = useState("edit"); // edit | wall
-  const [room, setRoom] = useState("living");
+  const [room, setRoom] = useState("warm");
   const [snapshot, setSnapshot] = useState(null);
   const [busyPdf, setBusyPdf] = useState(false);
   const [textures, setTextures] = useState(null);
+  const [pZoom, setPZoom] = useState(1);
+  const pan = useRef({ x: 0, y: 0 });
+  const [, forcePan] = useState(0);
+  const pointers = useRef(new Map());
+  const pinchDist = useRef(0);
   const canvasRef = useRef(null);
   const gridRef = useRef(null);
   const stageRef = useRef(null);
@@ -100,7 +105,10 @@ export default function Editor() {
     const c = new Array(PALETTE.length).fill(0);
     for (let i = 0; i < grid.length; i++) c[grid[i]]++;
     setCounts(c);
-    const cell = Math.max(6, Math.floor(Math.min(760 / W, 760 / H)));
+    // render at high resolution (up to 24px per stud, capped at ~14MP) so
+    // close-up zoom shows real brick texture detail
+    let cell = 24;
+    if (W * cell * H * cell > 14e6) cell = Math.floor(Math.sqrt(14e6) / Math.max(W, H));
     const cv = canvasRef.current;
     if (!cv) return;
     cv.width = W * cell; cv.height = H * cell;
@@ -125,6 +133,48 @@ export default function Editor() {
     next[i] = !next[i];
     setEnabled(next);
   };
+
+  const clampPan = (z) => {
+    const lim = (v, s) => Math.max(-s, Math.min(s, v));
+    const el = stageRef.current;
+    const w = el ? Math.min(760, el.clientWidth) : 760;
+    const max = (w * (z - 1)) / 2;
+    pan.current = { x: lim(pan.current.x, max), y: lim(pan.current.y, max) };
+  };
+  const setZoomClamped = (z) => {
+    const nz = Math.max(1, Math.min(8, z));
+    clampPan(nz);
+    setPZoom(nz);
+    if (nz === 1) pan.current = { x: 0, y: 0 };
+  };
+  const onPtrDown = (e) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()];
+      pinchDist.current = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+  };
+  const onPtrMove = (e) => {
+    if (!pointers.current.has(e.pointerId)) return;
+    const prev = pointers.current.get(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchDist.current > 0) setZoomClamped(pZoom * (d / pinchDist.current));
+      pinchDist.current = d;
+    } else if (pZoom > 1) {
+      pan.current = { x: pan.current.x + (e.clientX - prev.x), y: pan.current.y + (e.clientY - prev.y) };
+      clampPan(pZoom);
+      forcePan((v) => v + 1);
+    }
+  };
+  const onPtrUp = (e) => {
+    pointers.current.delete(e.pointerId);
+    pinchDist.current = 0;
+  };
+  const onWheel = (e) => setZoomClamped(pZoom * (1 - e.deltaY * 0.0015));
 
   const downloadPNG = () => {
     const cv = canvasRef.current;
@@ -186,7 +236,7 @@ export default function Editor() {
   };
 
   const roomCfg = ROOMS[room];
-  const ppm = stageW / roomCfg.width;
+  const ppm = stageW / WALL_W;
   const wallPx = WALL_H * ppm;
   const floorPx = 0.55 * ppm;
   const picPxW = (picW / 100) * ppm;
@@ -285,7 +335,7 @@ export default function Editor() {
         {view === "wall" && (
           <div style={S.panel}>
             <div>
-              <div style={S.label}>בחירת חדר</div>
+              <div style={S.label}>גוון הקיר</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {Object.entries(ROOMS).map(([k, r]) => (
                   <button key={k} style={S.sizeBtn(room === k)} onClick={() => setRoom(k)}>{r.label}</button>
@@ -296,7 +346,7 @@ export default function Editor() {
               {!img && <div style={{ color: "#FFA745", marginBottom: 6 }}>העלו תמונה בלשונית עריכה כדי לראות אותה כאן</div>}
               התמונה שלך: <b style={{ color: "#EDEDEF" }}>{picW.toFixed(0)} × {picH.toFixed(0)} ס״מ</b>
               <br />({boardsW}×{boardsH} לוחות • {totalBrix.toLocaleString()} בריקס)
-              <br />ההדמיה בקנה מידה אמיתי מול רוחב קיר של {roomCfg.width} מ׳.
+              <br />ההדמיה בקנה מידה אמיתי מול קיר ברוחב {WALL_W} מ׳ ודמות בגובה 1.70 מ׳.
             </div>
             <button style={S.ghost} onClick={() => setView("edit")}>חזרה לעריכה ושינוי גודל</button>
           </div>
@@ -317,7 +367,35 @@ export default function Editor() {
             </label>
           ) : view === "edit" ? (
             <>
-              <canvas ref={canvasRef} style={{ maxWidth: "100%", borderRadius: 10, boxShadow: "0 8px 40px rgba(0,0,0,.5)" }} />
+              <div
+                onPointerDown={onPtrDown} onPointerMove={onPtrMove} onPointerUp={onPtrUp}
+                onPointerCancel={onPtrUp} onWheel={onWheel}
+                style={{
+                  width: "100%", maxWidth: 760,
+                  aspectRatio: `${boardsW} / ${boardsH}`,
+                  overflow: "hidden", borderRadius: 10,
+                  boxShadow: "0 8px 40px rgba(0,0,0,.5)",
+                  touchAction: "none",
+                  cursor: pZoom > 1 ? "grab" : "zoom-in",
+                }}
+              >
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    width: "100%", height: "100%", display: "block",
+                    transform: `translate(${pan.current.x}px, ${pan.current.y}px) scale(${pZoom})`,
+                    transformOrigin: "center center",
+                    imageRendering: pZoom > 4 ? "pixelated" : "auto",
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 760 }}>
+                <span style={{ fontSize: 12, color: "#8B8F98", whiteSpace: "nowrap" }}>זום {pZoom.toFixed(1)}×</span>
+                <input style={{ flex: 1, accentColor: "#FF6600" }} type="range" min={10} max={80}
+                  value={pZoom * 10} onChange={(e) => setZoomClamped(+e.target.value / 10)} />
+                {pZoom > 1 && <button style={S.ghost} onClick={() => setZoomClamped(1)}>איפוס</button>}
+              </div>
+              <div style={{ fontSize: 11, color: "#8B8F98" }}>צביטה בשתי אצבעות או גלגלת עכבר לזום • גרירה להזזה — ככה רואים את הבריקס מקרוב</div>
               {counts && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxWidth: 780, justifyContent: "center" }}>
                   {sorted.map(({ c, i }) => (

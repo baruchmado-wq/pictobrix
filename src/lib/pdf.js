@@ -2,7 +2,7 @@
 // Light because each icon is embedded ONCE as a PDF XObject and reused on every
 // cell (the 2019 system embedded thousands of images), and all content streams
 // are Flate-compressed. No server needed.
-import { RGB, BOARD } from "./palette.js";
+import { RGB, BOARD, textureUrl } from "./palette.js";
 
 const PT_W = 841.89, PT_H = 1190.55; // A3 portrait
 const MM = 2.83465;
@@ -61,6 +61,37 @@ async function loadLogoJpeg() {
   return LOGO_CACHE;
 }
 
+let TEXTURE_CACHE = null;
+async function loadTextureImages() {
+  if (TEXTURE_CACHE) return TEXTURE_CACHE;
+  TEXTURE_CACHE = await Promise.all(
+    Array.from({ length: 40 }, (_, i) => new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = rej;
+      im.src = textureUrl(i);
+    }))
+  );
+  return TEXTURE_CACHE;
+}
+
+// realistic brick-texture overview image for page 1
+async function overviewJpeg(grid, W, H) {
+  const tex = await loadTextureImages();
+  const cell = Math.min(10, Math.floor(2000 / Math.max(W, H)));
+  const cv = document.createElement("canvas");
+  cv.width = W * cell; cv.height = H * cell;
+  const ctx = cv.getContext("2d");
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++)
+      ctx.drawImage(tex[grid[y * W + x]], x * cell, y * cell, cell, cell);
+  const b64 = cv.toDataURL("image/jpeg", 0.82).split(",")[1];
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return { bytes, w: cv.width, h: cv.height };
+}
+
 const f2 = (v) => (Math.round(v * 100) / 100).toString();
 const textW = (s, size) => s.length * size * 0.55; // Helvetica approximation
 const rgbn = (i) => {
@@ -72,6 +103,7 @@ export async function buildInstructionsPdf(gridData, bw, bh, projectName) {
   const { grid, W, H } = gridData;
   const icons = await loadIconJpegs();
   const logo = await loadLogoJpeg();
+  const ov = await overviewJpeg(grid, W, H);
   const totalPages = bw * bh + 1;
 
   const chunks = [];
@@ -110,10 +142,13 @@ export async function buildInstructionsPdf(gridData, bw, bh, projectName) {
     logo.bytes, true);
   let xo = "";
   for (let i = 0; i < 40; i++) xo += `/I${i + 1} ${5 + i} 0 R `;
-  obj(46, `<< /Font << /F1 3 0 R /F2 4 0 R >> /XObject << ${xo}/LG 45 0 R >> >>`);
+  await streamObj(47,
+    `/Type /XObject /Subtype /Image /Width ${ov.w} /Height ${ov.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`,
+    ov.bytes, true);
+  obj(46, `<< /Font << /F1 3 0 R /F2 4 0 R >> /XObject << ${xo}/LG 45 0 R /OV 47 0 R >> >>`);
 
   const pageObjIds = [];
-  let nextId = 47;
+  let nextId = 48;
 
   const header = (logoW) => {
     const lh = (logo.h / logo.w) * logoW;
@@ -132,16 +167,7 @@ export async function buildInstructionsPdf(gridData, bw, bh, projectName) {
     const cell = gw / W;
     const gh = H * cell;
     const gx = (PT_W - gw) / 2, gyTop = PT_H - 42 * MM;
-    for (let y = 0; y < H; y++) {
-      let x = 0;
-      while (x < W) {
-        const v = grid[y * W + x];
-        let x2 = x + 1;
-        while (x2 < W && grid[y * W + x2] === v) x2++;
-        c += `${rgbn(v)} rg ${f2(gx + x * cell)} ${f2(gyTop - (y + 1) * cell)} ${f2((x2 - x) * cell)} ${f2(cell)} re f\n`;
-        x = x2;
-      }
-    }
+    c += `q ${f2(gw)} 0 0 ${f2(gh)} ${f2(gx)} ${f2(gyTop - gh)} cm /OV Do Q\n`;
     c += "1 1 1 RG 1.6 w\n";
     for (let b = 1; b < bw; b++) c += `${f2(gx + b * BOARD * cell)} ${f2(gyTop - gh)} m ${f2(gx + b * BOARD * cell)} ${f2(gyTop)} l S\n`;
     for (let b = 1; b < bh; b++) c += `${f2(gx)} ${f2(gyTop - b * BOARD * cell)} m ${f2(gx + gw)} ${f2(gyTop - b * BOARD * cell)} l S\n`;
