@@ -78,14 +78,16 @@ async function loadTextureImages() {
 // realistic brick-texture overview image for page 1
 async function overviewJpeg(grid, W, H) {
   const tex = await loadTextureImages();
-  const cell = Math.min(10, Math.floor(2000 / Math.max(W, H)));
+  // print-quality overview: up to 32px per stud (~430 DPI on the A3 page),
+  // capped at 4096px so mobile browsers can still render the canvas
+  const cell = Math.max(12, Math.min(32, Math.floor(4096 / Math.max(W, H))));
   const cv = document.createElement("canvas");
   cv.width = W * cell; cv.height = H * cell;
   const ctx = cv.getContext("2d");
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++)
       ctx.drawImage(tex[grid[y * W + x]], x * cell, y * cell, cell, cell);
-  const b64 = cv.toDataURL("image/jpeg", 0.82).split(",")[1];
+  const b64 = cv.toDataURL("image/jpeg", 0.8).split(",")[1];
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
