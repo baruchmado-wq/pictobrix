@@ -2,7 +2,9 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { PALETTE, BOARD, BOARD_CM, iconUrl, textureUrl } from "../lib/palette.js";
 import { quantize, renderGrid } from "../lib/bricks.js";
 import { buildInstructionsPdf, bytesToDataUrl } from "../lib/pdf.js";
-import RoomScene, { ROOMS, WALL_H, WALL_W } from "./RoomScene.jsx";
+import RoomScene, { ROOMS } from "./RoomScene.jsx";
+
+const TEX_PX = 192; // texture asset resolution
 
 export default function Editor() {
   const [img, setImg] = useState(null);
@@ -12,28 +14,28 @@ export default function Editor() {
   const [contrast, setContrast] = useState(0);
   const [saturation, setSaturation] = useState(0);
   const [dither, setDither] = useState(true);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(1);   // crop zoom
   const [offX, setOffX] = useState(50);
   const [offY, setOffY] = useState(50);
   const [enabled, setEnabled] = useState(PALETTE.map(() => true));
   const [counts, setCounts] = useState(null);
   const [drag, setDrag] = useState(false);
-  const [view, setView] = useState("edit"); // edit | wall
-  const [room, setRoom] = useState("warm");
+  const [view, setView] = useState("edit");
+  const [room, setRoom] = useState("living");
   const [snapshot, setSnapshot] = useState(null);
   const [busyPdf, setBusyPdf] = useState(false);
   const [textures, setTextures] = useState(null);
-  const [pZoom, setPZoom] = useState(1);
-  const pan = useRef({ x: 0, y: 0 });
-  const [, forcePan] = useState(0);
+  const [pZoom, setPZoom] = useState(1); // preview zoom (viewport-rendered, always sharp)
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const gridRef = useRef(null);
+  const vpRef = useRef({ cx: 0, cy: 0 }); // viewport center in stud units
   const pointers = useRef(new Map());
   const pinchDist = useRef(0);
-  const canvasRef = useRef(null);
-  const gridRef = useRef(null);
+  const rafRef = useRef(0);
   const stageRef = useRef(null);
   const [stageW, setStageW] = useState(760);
 
-  // load the 40 real brick textures once
   useEffect(() => {
     let alive = true;
     Promise.all(
@@ -43,14 +45,14 @@ export default function Editor() {
         im.onerror = rej;
         im.src = textureUrl(i);
       }))
-    ).then((imgs) => { if (alive) setTextures(imgs); })
-     .catch(() => {}); // procedural fallback stays
+    ).then((imgs) => { if (alive) setTextures(imgs); }).catch(() => {});
     return () => { alive = false; };
   }, []);
 
   useEffect(() => {
     const measure = () => {
       if (stageRef.current) setStageW(Math.min(760, stageRef.current.clientWidth));
+      schedulePreview();
     };
     measure();
     window.addEventListener("resize", measure);
@@ -62,13 +64,80 @@ export default function Editor() {
     const reader = new FileReader();
     reader.onload = () => {
       const image = new Image();
-      image.onload = () => { setImg(image); setZoom(1); setOffX(50); setOffY(50); setView("edit"); };
+      image.onload = () => { setImg(image); setZoom(1); setOffX(50); setOffY(50); setView("edit"); setPZoom(1); };
       image.src = reader.result;
     };
     reader.readAsDataURL(file);
   };
 
-  const render = useCallback(() => {
+  // ---- viewport preview drawing: only the visible studs, always at full texture sharpness ----
+  const maxPZoom = () => {
+    const g = gridRef.current;
+    const cont = containerRef.current;
+    if (!g || !cont) return 8;
+    const cssCell = cont.clientWidth / g.W;
+    return Math.max(4, Math.min(30, TEX_PX / cssCell)); // stop when 1 stud = texture resolution
+  };
+
+  const drawPreview = useCallback(() => {
+    const g = gridRef.current;
+    const cv = canvasRef.current;
+    const cont = containerRef.current;
+    if (!g || !cv || !cont) return;
+    const { grid, W, H } = g;
+    const z = Math.max(1, pZoom);
+    const cssW = cont.clientWidth;
+    const cssH = (cssW * H) / W;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (cv.width !== Math.round(cssW * dpr)) {
+      cv.width = Math.round(cssW * dpr);
+      cv.height = Math.round(cssH * dpr);
+      cv.style.width = cssW + "px";
+      cv.style.height = cssH + "px";
+    }
+    const ctx = cv.getContext("2d");
+    const cell = (cv.width / W) * z; // device px per stud
+    const viewW = W / z, viewH = H / z;
+    // clamp center
+    const vp = vpRef.current;
+    if (z <= 1) { vp.cx = W / 2; vp.cy = H / 2; }
+    else {
+      vp.cx = Math.max(viewW / 2, Math.min(W - viewW / 2, vp.cx || W / 2));
+      vp.cy = Math.max(viewH / 2, Math.min(H - viewH / 2, vp.cy || H / 2));
+    }
+    const x0 = vp.cx - viewW / 2, y0 = vp.cy - viewH / 2;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    const xi0 = Math.floor(x0), yi0 = Math.floor(y0);
+    const xi1 = Math.min(W - 1, Math.ceil(x0 + viewW)), yi1 = Math.min(H - 1, Math.ceil(y0 + viewH));
+    for (let y = yi0; y <= yi1; y++) {
+      for (let x = xi0; x <= xi1; x++) {
+        const px = (x - x0) * cell, py = (y - y0) * cell;
+        const v = grid[y * W + x];
+        if (textures) ctx.drawImage(textures[v], px, py, cell + 0.5, cell + 0.5);
+        else { ctx.fillStyle = PALETTE[v].hex; ctx.fillRect(px, py, cell + 0.5, cell + 0.5); }
+      }
+    }
+    // board separators
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = Math.max(1.5, cell / 30);
+    for (let bx = BOARD; bx < W; bx += BOARD) {
+      const px = (bx - x0) * cell;
+      if (px >= 0 && px <= cv.width) { ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, cv.height); ctx.stroke(); }
+    }
+    for (let by = BOARD; by < H; by += BOARD) {
+      const py = (by - y0) * cell;
+      if (py >= 0 && py <= cv.height) { ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(cv.width, py); ctx.stroke(); }
+    }
+  }, [pZoom, textures]);
+
+  const schedulePreview = useCallback(() => {
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => drawPreview());
+  }, [drawPreview]);
+
+  // ---- pixelate + quantize ----
+  const compute = useCallback(() => {
     if (!img || view !== "edit") return;
     const W = boardsW * BOARD, H = boardsH * BOARD;
     const off = document.createElement("canvas");
@@ -76,7 +145,6 @@ export default function Editor() {
     const octx = off.getContext("2d");
     octx.imageSmoothingEnabled = true;
     octx.imageSmoothingQuality = "high";
-    // cover-crop + zoom/pan
     const ta = W / H;
     let cw = img.width, ch = img.height;
     if (cw / ch > ta) cw = ch * ta; else ch = cw / ta;
@@ -105,47 +173,30 @@ export default function Editor() {
     const c = new Array(PALETTE.length).fill(0);
     for (let i = 0; i < grid.length; i++) c[grid[i]]++;
     setCounts(c);
-    // render at high resolution (up to 24px per stud, capped at ~14MP) so
-    // close-up zoom shows real brick texture detail
-    let cell = 24;
-    if (W * cell * H * cell > 14e6) cell = Math.floor(Math.sqrt(14e6) / Math.max(W, H));
-    const cv = canvasRef.current;
-    if (!cv) return;
+    schedulePreview();
+  }, [img, view, boardsW, boardsH, brightness, contrast, saturation, dither, zoom, offX, offY, enabled, schedulePreview]);
+
+  useEffect(() => { compute(); }, [compute]);
+  useEffect(() => { schedulePreview(); }, [pZoom, textures, schedulePreview]);
+
+  // full-resolution render for snapshot / PNG download
+  const renderFull = (cell) => {
+    const g = gridRef.current;
+    if (!g) return null;
+    const { grid, W, H } = g;
+    const cv = document.createElement("canvas");
     cv.width = W * cell; cv.height = H * cell;
     const ctx = cv.getContext("2d");
     renderGrid(ctx, grid, W, H, cell, textures);
-    ctx.strokeStyle = "rgba(255,255,255,0.85)";
-    ctx.lineWidth = 2;
-    for (let bx = 1; bx < boardsW; bx++) {
-      ctx.beginPath(); ctx.moveTo(bx * BOARD * cell, 0); ctx.lineTo(bx * BOARD * cell, H * cell); ctx.stroke();
-    }
-    for (let by = 1; by < boardsH; by++) {
-      ctx.beginPath(); ctx.moveTo(0, by * BOARD * cell); ctx.lineTo(W * cell, by * BOARD * cell); ctx.stroke();
-    }
-  }, [img, view, boardsW, boardsH, brightness, contrast, saturation, dither, zoom, offX, offY, enabled, textures]);
-
-  useEffect(() => { render(); }, [render]);
-
-  const toggleColor = (i) => {
-    const next = [...enabled];
-    const on = next.filter(Boolean).length;
-    if (next[i] && on <= 2) return;
-    next[i] = !next[i];
-    setEnabled(next);
+    return cv;
   };
 
-  const clampPan = (z) => {
-    const lim = (v, s) => Math.max(-s, Math.min(s, v));
-    const el = stageRef.current;
-    const w = el ? Math.min(760, el.clientWidth) : 760;
-    const max = (w * (z - 1)) / 2;
-    pan.current = { x: lim(pan.current.x, max), y: lim(pan.current.y, max) };
-  };
-  const setZoomClamped = (z) => {
-    const nz = Math.max(1, Math.min(8, z));
-    clampPan(nz);
-    setPZoom(nz);
-    if (nz === 1) pan.current = { x: 0, y: 0 };
+  // ---- preview zoom/pan gestures ----
+  const setPZoomClamped = (z) => setPZoom(Math.max(1, Math.min(maxPZoom(), z)));
+  const cssCell = () => {
+    const g = gridRef.current, cont = containerRef.current;
+    if (!g || !cont) return 8;
+    return (cont.clientWidth / g.W) * pZoom;
   };
   const onPtrDown = (e) => {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -162,22 +213,31 @@ export default function Editor() {
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (pinchDist.current > 0) setZoomClamped(pZoom * (d / pinchDist.current));
+      if (pinchDist.current > 0) setPZoomClamped(pZoom * (d / pinchDist.current));
       pinchDist.current = d;
     } else if (pZoom > 1) {
-      pan.current = { x: pan.current.x + (e.clientX - prev.x), y: pan.current.y + (e.clientY - prev.y) };
-      clampPan(pZoom);
-      forcePan((v) => v + 1);
+      const c = cssCell();
+      vpRef.current.cx -= (e.clientX - prev.x) / c;
+      vpRef.current.cy -= (e.clientY - prev.y) / c;
+      schedulePreview();
     }
   };
   const onPtrUp = (e) => {
     pointers.current.delete(e.pointerId);
     pinchDist.current = 0;
   };
-  const onWheel = (e) => setZoomClamped(pZoom * (1 - e.deltaY * 0.0015));
+  const onWheel = (e) => setPZoomClamped(pZoom * (1 - e.deltaY * 0.0015));
+
+  const toggleColor = (i) => {
+    const next = [...enabled];
+    const on = next.filter(Boolean).length;
+    if (next[i] && on <= 2) return;
+    next[i] = !next[i];
+    setEnabled(next);
+  };
 
   const downloadPNG = () => {
-    const cv = canvasRef.current;
+    const cv = renderFull(24);
     if (!cv) return;
     const a = document.createElement("a");
     a.download = "pictobrix-preview.png";
@@ -203,8 +263,10 @@ export default function Editor() {
   };
 
   const goWall = () => {
-    const cv = canvasRef.current;
-    if (cv && img) setSnapshot(cv.toDataURL("image/jpeg", 0.9));
+    if (img && gridRef.current) {
+      const cv = renderFull(12);
+      if (cv) setSnapshot(cv.toDataURL("image/jpeg", 0.85));
+    }
     setView("wall");
   };
 
@@ -236,11 +298,6 @@ export default function Editor() {
   };
 
   const roomCfg = ROOMS[room];
-  const ppm = stageW / WALL_W;
-  const wallPx = WALL_H * ppm;
-  const floorPx = 0.55 * ppm;
-  const picPxW = (picW / 100) * ppm;
-  const picPxH = (picH / 100) * ppm;
 
   return (
     <div style={S.page}>
@@ -335,7 +392,7 @@ export default function Editor() {
         {view === "wall" && (
           <div style={S.panel}>
             <div>
-              <div style={S.label}>גוון הקיר</div>
+              <div style={S.label}>בחירת חדר</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {Object.entries(ROOMS).map(([k, r]) => (
                   <button key={k} style={S.sizeBtn(room === k)} onClick={() => setRoom(k)}>{r.label}</button>
@@ -346,7 +403,7 @@ export default function Editor() {
               {!img && <div style={{ color: "#FFA745", marginBottom: 6 }}>העלו תמונה בלשונית עריכה כדי לראות אותה כאן</div>}
               התמונה שלך: <b style={{ color: "#EDEDEF" }}>{picW.toFixed(0)} × {picH.toFixed(0)} ס״מ</b>
               <br />({boardsW}×{boardsH} לוחות • {totalBrix.toLocaleString()} בריקס)
-              <br />ההדמיה בקנה מידה אמיתי מול קיר ברוחב {WALL_W} מ׳ ודמות בגובה 1.70 מ׳.
+              <br />ההדמיה על צילום אמיתי, בקנה מידה אמיתי לפי הריהוט בחדר.
             </div>
             <button style={S.ghost} onClick={() => setView("edit")}>חזרה לעריכה ושינוי גודל</button>
           </div>
@@ -368,34 +425,26 @@ export default function Editor() {
           ) : view === "edit" ? (
             <>
               <div
+                ref={containerRef}
                 onPointerDown={onPtrDown} onPointerMove={onPtrMove} onPointerUp={onPtrUp}
                 onPointerCancel={onPtrUp} onWheel={onWheel}
                 style={{
                   width: "100%", maxWidth: 760,
-                  aspectRatio: `${boardsW} / ${boardsH}`,
                   overflow: "hidden", borderRadius: 10,
                   boxShadow: "0 8px 40px rgba(0,0,0,.5)",
                   touchAction: "none",
                   cursor: pZoom > 1 ? "grab" : "zoom-in",
                 }}
               >
-                <canvas
-                  ref={canvasRef}
-                  style={{
-                    width: "100%", height: "100%", display: "block",
-                    transform: `translate(${pan.current.x}px, ${pan.current.y}px) scale(${pZoom})`,
-                    transformOrigin: "center center",
-                    imageRendering: pZoom > 4 ? "pixelated" : "auto",
-                  }}
-                />
+                <canvas ref={canvasRef} style={{ display: "block" }} />
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 760 }}>
                 <span style={{ fontSize: 12, color: "#8B8F98", whiteSpace: "nowrap" }}>זום {pZoom.toFixed(1)}×</span>
-                <input style={{ flex: 1, accentColor: "#FF6600" }} type="range" min={10} max={80}
-                  value={pZoom * 10} onChange={(e) => setZoomClamped(+e.target.value / 10)} />
-                {pZoom > 1 && <button style={S.ghost} onClick={() => setZoomClamped(1)}>איפוס</button>}
+                <input style={{ flex: 1, accentColor: "#FF6600" }} type="range" min={10} max={Math.round(maxPZoom() * 10)}
+                  value={Math.min(pZoom, maxPZoom()) * 10} onChange={(e) => setPZoomClamped(+e.target.value / 10)} />
+                {pZoom > 1 && <button style={S.ghost} onClick={() => setPZoomClamped(1)}>איפוס</button>}
               </div>
-              <div style={{ fontSize: 11, color: "#8B8F98" }}>צביטה בשתי אצבעות או גלגלת עכבר לזום • גרירה להזזה — ככה רואים את הבריקס מקרוב</div>
+              <div style={{ fontSize: 11, color: "#8B8F98" }}>צביטה בשתי אצבעות או גלגלת עכבר לזום • גרירה להזזה — הבריקס נשארים חדים בכל רמת זום</div>
               {counts && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxWidth: 780, justifyContent: "center" }}>
                   {sorted.map(({ c, i }) => (
@@ -417,10 +466,9 @@ export default function Editor() {
             </>
           ) : (
             <div style={{ width: stageW, borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 40px rgba(0,0,0,.5)", position: "relative" }}>
-              <RoomScene room={room} stageW={stageW} ppm={ppm} wallPx={wallPx} floorPx={floorPx}
-                snapshot={snapshot} picPxW={picPxW} picPxH={picPxH} />
+              <RoomScene room={room} stageW={stageW} snapshot={snapshot} picWcm={picW} picHcm={picH} />
               <div style={{ position: "absolute", bottom: 8, insetInlineStart: 10, background: "rgba(0,0,0,.55)", color: "#fff", fontSize: 12, padding: "4px 10px", borderRadius: 8 }}>
-                {roomCfg.label} • תמונה {picW.toFixed(0)}×{picH.toFixed(0)} ס״מ • דמות בגובה 1.70 מ׳
+                {roomCfg.label} • תמונה {picW.toFixed(0)}×{picH.toFixed(0)} ס״מ
               </div>
             </div>
           )}
