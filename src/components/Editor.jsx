@@ -25,25 +25,28 @@ const IcUpload = () => ic("M7 12V5.5 M4.2 8.3 7 5.5l2.8 2.8 M2.5 2h9");
 const IcEdit = () => ic("M9.7 1.8l2.5 2.5L4.5 12H2v-2.5z");
 const IcWall = () => ic("M1.5 2.5h11v9h-11z M4 11.5v-4l2.5 2 3-3 3 3");
 
-// brand brick illustration for the empty state
+// the brand brick strip as an empty-state hero: five studs in brick colors
+const BRICK_STRIP = ["#F5AD39", "#F03A42", "#6845A4", "#28914F", "#2564B5"];
 const BrickHero = () => (
-  <svg width="72" height="66" viewBox="0 0 72 66" fill="none" className="px-drop-icon" aria-hidden="true">
-    <rect x="16" y="2" width="16" height="12" rx="3" fill="#FF6600" />
-    <rect x="40" y="2" width="16" height="12" rx="3" fill="#FF6600" />
-    <rect x="16" y="2" width="16" height="5" rx="2.5" fill="#FF8A3D" />
-    <rect x="40" y="2" width="16" height="5" rx="2.5" fill="#FF8A3D" />
-    <rect x="8" y="12" width="56" height="34" rx="6" fill="#FF6600" />
-    <rect x="8" y="12" width="56" height="12" rx="6" fill="#FF7A24" />
-    <rect x="14" y="52" width="44" height="6" rx="3" fill="#2C2F36" />
-    <rect x="20" y="60" width="32" height="4" rx="2" fill="#26292F" />
+  <svg width="180" height="44" viewBox="0 0 180 44" fill="none" className="px-drop-icon" aria-hidden="true">
+    {BRICK_STRIP.map((c, i) => (
+      <g key={c} transform={`translate(${i * 36},4)`}>
+        <rect width="36" height="36" fill={c} />
+        <circle cx="18" cy="19.5" r="11" fill="rgba(0,0,0,.18)" />
+        <circle cx="18" cy="18" r="11" fill={c} stroke="rgba(255,255,255,.45)" strokeWidth="1.5" />
+        <circle cx="14.5" cy="14.5" r="4.5" fill="rgba(255,255,255,.18)" />
+      </g>
+    ))}
   </svg>
 );
 
-function Slider({ min, max, value, onChange, disabled }) {
+function Slider({ min, max, value, onChange, disabled, color }) {
   const pct = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
+  const style = { "--fill": pct + "%" };
+  if (color) style["--sc"] = color;
   return (
     <input type="range" className="px-slider" min={min} max={max} value={value}
-      onChange={onChange} disabled={disabled} style={{ "--fill": pct + "%" }} />
+      onChange={onChange} disabled={disabled} style={style} />
   );
 }
 
@@ -531,9 +534,9 @@ export default function Editor() {
       </div>
       {counts && (
         <div className="px-row" style={{ marginTop: 10 }}>
-          <div className="px-stat"><div className="px-stat-n">{boardsW * boardsH}</div><div className="px-stat-l">לוחות</div></div>
-          <div className="px-stat"><div className="px-stat-n">{totalBrix.toLocaleString()}</div><div className="px-stat-l">בריקס</div></div>
-          <div className="px-stat"><div className="px-stat-n">{usedColors}</div><div className="px-stat-l">צבעים</div></div>
+          <div className="px-stat"><div className="px-stat-n" style={{ "--stat-c": "var(--bx-cyan)" }}>{boardsW * boardsH}</div><div className="px-stat-l">לוחות</div></div>
+          <div className="px-stat"><div className="px-stat-n" style={{ "--stat-c": "var(--bx-amber)" }}>{totalBrix.toLocaleString()}</div><div className="px-stat-l">בריקס</div></div>
+          <div className="px-stat"><div className="px-stat-n" style={{ "--stat-c": "var(--bx-lgreen)" }}>{usedColors}</div><div className="px-stat-l">צבעים</div></div>
         </div>
       )}
     </div>
@@ -542,11 +545,11 @@ export default function Editor() {
   const cropControls = img && (
     <div>
       <div className="px-label">חיתוך — זום {zoom.toFixed(1)}×</div>
-      <Slider min={10} max={40} value={zoom * 10} onChange={(e) => setZoom(+e.target.value / 10)} />
+      <Slider min={10} max={40} value={zoom * 10} onChange={(e) => setZoom(+e.target.value / 10)} color="var(--bx-lgreen)" />
       <div className="px-label">מיקום אופקי</div>
-      <Slider min={0} max={100} value={offX} onChange={(e) => setOffX(+e.target.value)} />
+      <Slider min={0} max={100} value={offX} onChange={(e) => setOffX(+e.target.value)} color="var(--bx-cyan)" />
       <div className="px-label">מיקום אנכי</div>
-      <Slider min={0} max={100} value={offY} onChange={(e) => setOffY(+e.target.value)} />
+      <Slider min={0} max={100} value={offY} onChange={(e) => setOffY(+e.target.value)} color="var(--bx-purple-lt)" />
       <div className="px-hint">זום פנימה + הזזה = פיקסול של אזור הפנים בלבד</div>
     </div>
   );
@@ -554,11 +557,11 @@ export default function Editor() {
   const adjustControls = (
     <div>
       <div className="px-label">בהירות {brightness}</div>
-      <Slider min={-80} max={80} value={brightness} onChange={(e) => setBrightness(+e.target.value)} />
+      <Slider min={-80} max={80} value={brightness} onChange={(e) => setBrightness(+e.target.value)} color="var(--bx-amber)" />
       <div className="px-label">ניגודיות {contrast}</div>
-      <Slider min={-80} max={80} value={contrast} onChange={(e) => setContrast(+e.target.value)} />
+      <Slider min={-80} max={80} value={contrast} onChange={(e) => setContrast(+e.target.value)} color="var(--bx-cyan)" />
       <div className="px-label">רוויה {saturation}</div>
-      <Slider min={-80} max={80} value={saturation} onChange={(e) => setSaturation(+e.target.value)} />
+      <Slider min={-80} max={80} value={saturation} onChange={(e) => setSaturation(+e.target.value)} color="var(--bx-red-lt)" />
       <label className="px-switch" style={{ marginTop: 10 }}>
         <input type="checkbox" checked={dither} onChange={(e) => setDither(e.target.checked)} />
         <span className="px-track" />
@@ -599,7 +602,7 @@ export default function Editor() {
       <label htmlFor="pbx-file" className="px-btn"><IcUpload />העלאת תמונה</label>
       {img && <button className="px-btn-ghost" onClick={downloadPNG}><IcFiles />הורדת PNG</button>}
       {img && (
-        <button className="px-btn" style={{ width: "100%" }} onClick={makePdf} disabled={busyPdf}>
+        <button className="px-btn" style={{ width: "100%", "--btn-bg": "var(--bx-blue)" }} onClick={makePdf} disabled={busyPdf}>
           <IcFiles />{busyPdf ? "מייצר PDF..." : "יצירת PDF הוראות A3"}
         </button>
       )}
@@ -628,11 +631,11 @@ export default function Editor() {
   );
 
   const TOOLS = [
-    ["size", "גודל", IcSize],
-    ["crop", "חיתוך", IcCrop],
-    ["adjust", "כוונון", IcAdjust],
-    ["colors", "צבעים", IcColors],
-    ["actions", "קבצים", IcFiles],
+    ["size", "גודל", IcSize, "var(--bx-blue-lt)"],
+    ["crop", "חיתוך", IcCrop, "var(--bx-lgreen)"],
+    ["adjust", "כוונון", IcAdjust, "var(--bx-amber)"],
+    ["colors", "צבעים", IcColors, "var(--bx-red-lt)"],
+    ["actions", "קבצים", IcFiles, "var(--bx-purple-lt)"],
   ];
 
   const emptyState = (dropProps = {}) => (
@@ -650,14 +653,13 @@ export default function Editor() {
   return (
     <div className="px-page">
       <div className={"px-header" + (isMobile ? " is-mobile" : "")}>
-        <span className="px-logo-plate">
-          <img src="/assets/logo.png" alt="PicToBrix" style={{ height: isMobile ? 22 : 30, display: "block" }} />
-        </span>
+        <img src="/assets/logo-white.png" alt="PicToBrix" className="px-logo" style={{ height: isMobile ? 36 : 48 }} />
         <div style={{ display: "flex", gap: 8, marginInlineStart: "auto" }}>
           <button className={"px-tab" + (view === "edit" ? " is-active" : "")} onClick={() => setView("edit")}><IcEdit />עריכה</button>
-          <button className={"px-tab" + (view === "wall" ? " is-active" : "")} onClick={goWall}><IcWall />הדמיה על קיר</button>
+          <button className={"px-tab" + (view === "wall" ? " is-active" : "")} style={{ "--tab-bg": "var(--bx-green)" }} onClick={goWall}><IcWall />הדמיה על קיר</button>
         </div>
       </div>
+      <div className="px-brickstrip" />
 
       <input id="pbx-file" type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => loadFile(e.target.files[0])} />
 
@@ -668,8 +670,9 @@ export default function Editor() {
             <>
               {previewBlock}
               <div className="px-tooltabs">
-                {TOOLS.map(([k, l, Ic]) => (
-                  <button key={k} className={"px-tooltab" + (tool === k ? " is-active" : "")} onClick={() => setTool(k)}>
+                {TOOLS.map(([k, l, Ic, c]) => (
+                  <button key={k} className={"px-tooltab" + (tool === k ? " is-active" : "")}
+                    style={{ "--tab-c": c }} onClick={() => setTool(k)}>
                     <Ic />{l}
                   </button>
                 ))}
