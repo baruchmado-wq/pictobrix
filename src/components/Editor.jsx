@@ -5,6 +5,47 @@ import { buildInstructionsPdf, bytesToDataUrl } from "../lib/pdf.js";
 import RoomScene, { ROOMS } from "./RoomScene.jsx";
 
 const TEX_PX = 192;
+const REVEAL_PER = 380;    // ms each brick takes to land
+const REVEAL_SPREAD = 1100; // ms between first and last brick start
+
+// ---------- inline SVG icons (no icon library) ----------
+const ic = (d, extra) => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor"
+    strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d={d} />{extra}
+  </svg>
+);
+const IcSize = () => ic("M2 2h10v10H2z M7 2v10 M2 7h10");
+const IcCrop = () => ic("M4 1v8a1 1 0 0 0 1 1h8 M1 4h8a1 1 0 0 1 1 1v8");
+const IcAdjust = () => ic("M2 4h10 M2 10h10", <><circle cx="5" cy="4" r="1.8" fill="var(--surface)" /><circle cx="9" cy="10" r="1.8" fill="var(--surface)" /></>);
+const IcColors = () => ic("M7 1.5a5.5 5.5 0 1 0 0 11c1 0 1.4-.7 1-1.5-.5-1 .2-2 1.3-2h1.4c.9 0 1.8-.7 1.8-2A5.7 5.7 0 0 0 7 1.5z",
+  <><circle cx="4.7" cy="5" r="0.9" fill="currentColor" stroke="none" /><circle cx="8.3" cy="4.2" r="0.9" fill="currentColor" stroke="none" /><circle cx="4.9" cy="8.6" r="0.9" fill="currentColor" stroke="none" /></>);
+const IcFiles = () => ic("M7 2v6.5 M4.2 6.2 7 9l2.8-2.8 M2.5 12h9");
+const IcUpload = () => ic("M7 12V5.5 M4.2 8.3 7 5.5l2.8 2.8 M2.5 2h9");
+const IcEdit = () => ic("M9.7 1.8l2.5 2.5L4.5 12H2v-2.5z");
+const IcWall = () => ic("M1.5 2.5h11v9h-11z M4 11.5v-4l2.5 2 3-3 3 3");
+
+// brand brick illustration for the empty state
+const BrickHero = () => (
+  <svg width="72" height="66" viewBox="0 0 72 66" fill="none" className="px-drop-icon" aria-hidden="true">
+    <rect x="16" y="2" width="16" height="12" rx="3" fill="#FF6600" />
+    <rect x="40" y="2" width="16" height="12" rx="3" fill="#FF6600" />
+    <rect x="16" y="2" width="16" height="5" rx="2.5" fill="#FF8A3D" />
+    <rect x="40" y="2" width="16" height="5" rx="2.5" fill="#FF8A3D" />
+    <rect x="8" y="12" width="56" height="34" rx="6" fill="#FF6600" />
+    <rect x="8" y="12" width="56" height="12" rx="6" fill="#FF7A24" />
+    <rect x="14" y="52" width="44" height="6" rx="3" fill="#2C2F36" />
+    <rect x="20" y="60" width="32" height="4" rx="2" fill="#26292F" />
+  </svg>
+);
+
+function Slider({ min, max, value, onChange, disabled }) {
+  const pct = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
+  return (
+    <input type="range" className="px-slider" min={min} max={max} value={value}
+      onChange={onChange} disabled={disabled} style={{ "--fill": pct + "%" }} />
+  );
+}
 
 export default function Editor() {
   const [img, setImg] = useState(null);
@@ -28,6 +69,7 @@ export default function Editor() {
   const [textures, setTextures] = useState(null);
   const [pZoom, setPZoom] = useState(1);
   const [isMobile, setIsMobile] = useState(false);
+  const [revealing, setRevealing] = useState(false);
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const gridRef = useRef(null);
@@ -36,6 +78,9 @@ export default function Editor() {
   const pinchDist = useRef(0);
   const rafRef = useRef(0);
   const stageRef = useRef(null);
+  const revealRef = useRef(null);        // { t0, delays, per, end } while the falling-bricks reveal runs
+  const pendingRevealRef = useRef(false); // set only on new image / board-count change
+  const reducedMotionRef = useRef(false);
   const [stageW, setStageW] = useState(760);
 
   useEffect(() => {
@@ -52,26 +97,33 @@ export default function Editor() {
   }, []);
 
   useEffect(() => {
-    const measure = () => {
-      setIsMobile(window.innerWidth < 760);
-      if (stageRef.current) setStageW(Math.min(760, stageRef.current.clientWidth));
-      schedulePreview();
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => { reducedMotionRef.current = mq.matches; };
+    sync();
+    mq.addEventListener?.("change", sync);
+    return () => mq.removeEventListener?.("change", sync);
+  }, []);
+
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
   const loadFile = (file) => {
     if (!file || !file.type.startsWith("image/")) return;
     const reader = new FileReader();
     reader.onload = () => {
       const image = new Image();
-      image.onload = () => { setImg(image); setZoom(1); setOffX(50); setOffY(50); setView("edit"); setPZoom(1); };
+      image.onload = () => {
+        pendingRevealRef.current = true;
+        setImg(image); setZoom(1); setOffX(50); setOffY(50); setView("edit"); setPZoom(1);
+      };
       image.src = reader.result;
     };
     reader.readAsDataURL(file);
+  };
+
+  const setBoards = (w, h) => {
+    if (w === boardsW && h === boardsH) return;
+    pendingRevealRef.current = true;
+    setBoardsW(w); setBoardsH(h);
   };
 
   // ---- viewport-rendered preview: only visible studs, full texture sharpness ----
@@ -139,9 +191,172 @@ export default function Editor() {
   }, [pZoom, textures, isMobile]);
 
   const schedulePreview = useCallback(() => {
+    if (revealRef.current) return; // the reveal loop is already redrawing every frame
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => drawPreview());
   }, [drawPreview]);
+
+  useEffect(() => {
+    const measure = () => {
+      setIsMobile(window.innerWidth < 760);
+      if (stageRef.current) setStageW(Math.min(760, stageRef.current.clientWidth));
+      schedulePreview();
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [view, schedulePreview]);
+
+  // ---- falling-bricks reveal ----
+  // Bricks land in diagonal waves with random jitter, each fading in (and, when
+  // the studs are big enough for it to be visible, scaling 1.15 -> 1).
+  // Perf: the finished picture is prerendered ONCE, then every frame is a single
+  // blit masked by a 1-pixel-per-brick alpha mask (nearest-neighbor upscaled via
+  // destination-in) — a handful of draw calls per frame instead of thousands.
+  const startReveal = () => {
+    const g = gridRef.current;
+    const cv = canvasRef.current;
+    if (!g || !cv || reducedMotionRef.current) { schedulePreview(); return; }
+    const { grid, W, H } = g;
+
+    // same viewport math as drawPreview (gestures are blocked, so it is static)
+    const z = Math.max(1, pZoom);
+    const { w: cssW, h: cssH } = previewCssSize();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.round(cssW * dpr);
+    cv.height = Math.round(cssH * dpr);
+    cv.style.width = cssW + "px";
+    cv.style.height = cssH + "px";
+    const cell = (cv.width / W) * z;
+    const viewW = W / z, viewH = H / z;
+    const vp = vpRef.current;
+    if (z <= 1) { vp.cx = W / 2; vp.cy = H / 2; }
+    else {
+      vp.cx = Math.max(viewW / 2, Math.min(W - viewW / 2, vp.cx || W / 2));
+      vp.cy = Math.max(viewH / 2, Math.min(H - viewH / 2, vp.cy || H / 2));
+    }
+    const x0 = vp.cx - viewW / 2, y0 = vp.cy - viewH / 2;
+    const xi0 = Math.max(0, Math.floor(x0)), yi0 = Math.max(0, Math.floor(y0));
+    const xi1 = Math.min(W - 1, Math.ceil(x0 + viewW)), yi1 = Math.min(H - 1, Math.ceil(y0 + viewH));
+
+    // prerender the finished picture (visible cells only)
+    const fin = document.createElement("canvas");
+    fin.width = cv.width; fin.height = cv.height;
+    const fctx = fin.getContext("2d");
+    fctx.imageSmoothingEnabled = true;
+    fctx.imageSmoothingQuality = "high";
+    for (let y = yi0; y <= yi1; y++) {
+      for (let x = xi0; x <= xi1; x++) {
+        const px = (x - x0) * cell, py = (y - y0) * cell;
+        const v = grid[y * W + x];
+        if (textures) fctx.drawImage(textures[v], px, py, cell + 0.5, cell + 0.5);
+        else { fctx.fillStyle = PALETTE[v].hex; fctx.fillRect(px, py, cell + 0.5, cell + 0.5); }
+      }
+    }
+
+    // per-brick landing delays: diagonal wave + random jitter
+    const delays = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        delays[y * W + x] = ((x + y) / (W + H)) * REVEAL_SPREAD * 0.7 + Math.random() * REVEAL_SPREAD * 0.3;
+      }
+    }
+
+    // 1px-per-brick alpha mask
+    const mask = document.createElement("canvas");
+    mask.width = W; mask.height = H;
+    const mctx = mask.getContext("2d");
+    const mid = mctx.createImageData(W, H);
+
+    // scale-pop is only drawn per-brick where a 15% overshoot is actually
+    // visible (big studs) and cheap (few visible cells)
+    const visCells = (xi1 - xi0 + 1) * (yi1 - yi0 + 1);
+    const pop = cell >= 14 && visCells <= 4200 && textures;
+    let minis = null;
+    if (pop) {
+      const ms = Math.ceil(cell * 1.16);
+      minis = textures.map((t) => {
+        const c = document.createElement("canvas");
+        c.width = ms; c.height = ms;
+        const x = c.getContext("2d");
+        x.imageSmoothingQuality = "high";
+        x.drawImage(t, 0, 0, ms, ms);
+        return c;
+      });
+    }
+
+    // block zoom/pan gestures for the duration
+    pointers.current.clear();
+    pinchDist.current = 0;
+    revealRef.current = { t0: performance.now() };
+    setRevealing(true);
+    cancelAnimationFrame(rafRef.current);
+
+    const per = REVEAL_PER, end = REVEAL_SPREAD + REVEAL_PER;
+    const ctx = cv.getContext("2d");
+    const frame = () => {
+      const rv = revealRef.current;
+      if (!rv) return;
+      const now = performance.now() - rv.t0;
+      if (now >= end) {
+        revealRef.current = null;
+        setRevealing(false);
+        drawPreview(); // hand back to the regular renderer
+        return;
+      }
+      ctx.globalCompositeOperation = "source-over";
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(fin, 0, 0);
+      const d = mid.data;
+      for (let i = 0; i < W * H; i++) {
+        const p = (now - delays[i]) / per;
+        if (p <= 0) { d[i * 4 + 3] = 0; continue; }
+        if (p >= 1) { d[i * 4 + 3] = 255; continue; }
+        const e = 1 - (1 - p) * (1 - p) * (1 - p); // easeOutCubic fade
+        d[i * 4 + 3] = (e * 255) | 0;
+      }
+      mctx.putImageData(mid, 0, 0);
+      ctx.imageSmoothingEnabled = false; // hard per-brick mask edges
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.drawImage(mask, 0, 0, W, H, -x0 * cell, -y0 * cell, W * cell, H * cell);
+      ctx.globalCompositeOperation = "destination-over";
+      ctx.fillStyle = "#141519";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.imageSmoothingEnabled = true;
+      if (pop) {
+        for (let y = yi0; y <= yi1; y++) {
+          for (let x = xi0; x <= xi1; x++) {
+            const p = (now - delays[y * W + x]) / per;
+            if (p <= 0 || p >= 1) continue;
+            const e = 1 - (1 - p) * (1 - p) * (1 - p);
+            const cs = cell * (1.15 - 0.15 * e);
+            ctx.globalAlpha = e;
+            ctx.drawImage(minis[grid[y * W + x]],
+              (x - x0) * cell - (cs - cell) / 2, (y - y0) * cell - (cs - cell) / 2, cs, cs);
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+      // board separator lines fade in with the reveal
+      ctx.globalAlpha = Math.min(1, now / end);
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.lineWidth = Math.max(1.5, cell / 30);
+      for (let bx = BOARD; bx < W; bx += BOARD) {
+        const px = (bx - x0) * cell;
+        if (px >= 0 && px <= cv.width) { ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, cv.height); ctx.stroke(); }
+      }
+      for (let by = BOARD; by < H; by += BOARD) {
+        const py = (by - y0) * cell;
+        if (py >= 0 && py <= cv.height) { ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(cv.width, py); ctx.stroke(); }
+      }
+      ctx.globalAlpha = 1;
+      rafRef.current = requestAnimationFrame(frame);
+    };
+    rafRef.current = requestAnimationFrame(frame);
+  };
+  const startRevealRef = useRef(startReveal);
+  startRevealRef.current = startReveal;
 
   const compute = useCallback(() => {
     if (!img || view !== "edit") return;
@@ -179,6 +394,11 @@ export default function Editor() {
     const c = new Array(PALETTE.length).fill(0);
     for (let i = 0; i < grid.length; i++) c[grid[i]]++;
     setCounts(c);
+    if (pendingRevealRef.current) {
+      pendingRevealRef.current = false;
+      startRevealRef.current();
+      return;
+    }
     schedulePreview();
   }, [img, view, boardsW, boardsH, brightness, contrast, saturation, dither, zoom, offX, offY, enabled, schedulePreview]);
 
@@ -203,6 +423,7 @@ export default function Editor() {
     return (previewCssSize().w / g.W) * pZoom;
   };
   const onPtrDown = (e) => {
+    if (revealRef.current) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.current.size === 2) {
@@ -211,6 +432,7 @@ export default function Editor() {
     }
   };
   const onPtrMove = (e) => {
+    if (revealRef.current) return;
     if (!pointers.current.has(e.pointerId)) return;
     const prev = pointers.current.get(e.pointerId);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -230,7 +452,7 @@ export default function Editor() {
     pointers.current.delete(e.pointerId);
     pinchDist.current = 0;
   };
-  const onWheel = (e) => setPZoomClamped(pZoom * (1 - e.deltaY * 0.0015));
+  const onWheel = (e) => { if (!revealRef.current) setPZoomClamped(pZoom * (1 - e.deltaY * 0.0015)); };
 
   const toggleColor = (i) => {
     const next = [...enabled];
@@ -281,58 +503,37 @@ export default function Editor() {
     : [];
   const picW = boardsW * BOARD_CM, picH = boardsH * BOARD_CM;
 
-  const S = {
-    page: { direction: "rtl", minHeight: "100vh", background: "#1B1D22", color: "#EDEDEF" },
-    header: { display: "flex", alignItems: "center", gap: 10, padding: isMobile ? "10px 12px" : "14px 22px", borderBottom: "1px solid #2C2F36", flexWrap: "wrap" },
-    main: { display: "flex", flexWrap: "wrap", gap: isMobile ? 12 : 22, padding: isMobile ? 12 : 22, alignItems: "flex-start" },
-    panel: { width: 320, background: "#23262C", borderRadius: 14, padding: 18, display: "flex", flexDirection: "column", gap: 16 },
-    stage: { flex: 1, minWidth: 280, display: "flex", flexDirection: "column", gap: isMobile ? 10 : 14, alignItems: "center" },
-    label: { fontSize: 13, color: "#A9ADB6", marginBottom: 6 },
-    row: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
-    btn: { background: "#FF6600", color: "#fff", border: "none", borderRadius: 10, padding: "10px 18px", fontSize: 15, fontWeight: 700, cursor: "pointer" },
-    ghost: { background: "transparent", color: "#EDEDEF", border: "1px solid #3A3E46", borderRadius: 10, padding: "9px 16px", fontSize: 14, cursor: "pointer" },
-    stat: { background: "#1B1D22", borderRadius: 10, padding: "8px 10px", flex: 1, textAlign: "center" },
-    statN: { fontSize: 17, fontWeight: 800 },
-    statL: { fontSize: 11, color: "#8B8F98" },
-    slider: { width: "100%", accentColor: "#FF6600" },
-    drop: { border: "2px dashed " + (drag ? "#FF6600" : "#3A3E46"), borderRadius: 16, width: "100%", maxWidth: 760, aspectRatio: "1", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, cursor: "pointer", background: drag ? "#2A2216" : "#202329", transition: "all .15s" },
-    sizeBtn: (on) => ({ flex: 1, padding: "8px 0", borderRadius: 8, border: on ? "1.5px solid #FF6600" : "1px solid #3A3E46", background: on ? "#33230F" : "transparent", color: "#EDEDEF", cursor: "pointer", fontSize: 14, fontWeight: on ? 700 : 400 }),
-    chip: (on) => ({ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px 4px 10px", borderRadius: 8, background: "#1B1D22", cursor: "pointer", opacity: on ? 1 : 0.32, border: "1px solid #2C2F36", fontSize: 12, flexShrink: 0 }),
-    tab: (on) => ({ padding: "8px 14px", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 14, fontWeight: on ? 700 : 400, background: on ? "#FF6600" : "#2C2F36", color: "#fff" }),
-    toolTab: (on) => ({ flex: 1, padding: "9px 0", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 13, fontWeight: on ? 700 : 400, background: on ? "#33230F" : "transparent", color: on ? "#FF6600" : "#A9ADB6", borderBottom: on ? "2px solid #FF6600" : "2px solid transparent" }),
-  };
-
   const roomCfg = ROOMS[room];
 
   // ---------- shared control blocks ----------
   const sizeControls = (
     <div>
-      <div style={S.label}>גודל התמונה (לוחות של 32×32)</div>
-      <div style={S.row}>
+      <div className="px-label">גודל התמונה (לוחות של 32×32)</div>
+      <div className="px-row">
         {[[2, 2], [3, 3], [4, 4]].map(([w, h]) => (
-          <button key={w} style={S.sizeBtn(boardsW === w && boardsH === h)} onClick={() => { setBoardsW(w); setBoardsH(h); }}>
+          <button key={w} className={"px-seg" + (boardsW === w && boardsH === h ? " is-active" : "")}
+            onClick={() => setBoards(w, h)}>
             {w}×{h}
           </button>
         ))}
       </div>
-      <div style={{ ...S.row, marginTop: 8 }}>
-        <span style={{ fontSize: 12, color: "#8B8F98" }}>מותאם:</span>
+      <div className="px-row" style={{ marginTop: 8 }}>
+        <span style={{ fontSize: 12, color: "var(--text-3)" }}>מותאם:</span>
         {["רוחב", "גובה"].map((t, k) => (
-          <select key={t} value={k === 0 ? boardsW : boardsH}
-            onChange={(e) => (k === 0 ? setBoardsW(+e.target.value) : setBoardsH(+e.target.value))}
-            style={{ background: "#1B1D22", color: "#EDEDEF", border: "1px solid #3A3E46", borderRadius: 8, padding: "6px 8px" }}>
+          <select key={t} className="px-select" value={k === 0 ? boardsW : boardsH}
+            onChange={(e) => (k === 0 ? setBoards(+e.target.value, boardsH) : setBoards(boardsW, +e.target.value))}>
             {[1, 2, 3, 4, 5, 6].map((v) => <option key={v} value={v}>{t} {v}</option>)}
           </select>
         ))}
       </div>
-      <div style={{ fontSize: 12, color: "#8B8F98", marginTop: 6 }}>
+      <div className="px-hint">
         גודל פיזי: {picW.toFixed(1)} × {picH.toFixed(1)} ס״מ
       </div>
       {counts && (
-        <div style={{ ...S.row, marginTop: 10 }}>
-          <div style={S.stat}><div style={S.statN}>{boardsW * boardsH}</div><div style={S.statL}>לוחות</div></div>
-          <div style={S.stat}><div style={S.statN}>{totalBrix.toLocaleString()}</div><div style={S.statL}>בריקס</div></div>
-          <div style={S.stat}><div style={S.statN}>{usedColors}</div><div style={S.statL}>צבעים</div></div>
+        <div className="px-row" style={{ marginTop: 10 }}>
+          <div className="px-stat"><div className="px-stat-n">{boardsW * boardsH}</div><div className="px-stat-l">לוחות</div></div>
+          <div className="px-stat"><div className="px-stat-n">{totalBrix.toLocaleString()}</div><div className="px-stat-l">בריקס</div></div>
+          <div className="px-stat"><div className="px-stat-n">{usedColors}</div><div className="px-stat-l">צבעים</div></div>
         </div>
       )}
     </div>
@@ -340,33 +541,34 @@ export default function Editor() {
 
   const cropControls = img && (
     <div>
-      <div style={S.label}>חיתוך — זום {zoom.toFixed(1)}×</div>
-      <input style={S.slider} type="range" min={10} max={40} value={zoom * 10} onChange={(e) => setZoom(+e.target.value / 10)} />
-      <div style={S.label}>מיקום אופקי</div>
-      <input style={S.slider} type="range" min={0} max={100} value={offX} onChange={(e) => setOffX(+e.target.value)} />
-      <div style={S.label}>מיקום אנכי</div>
-      <input style={S.slider} type="range" min={0} max={100} value={offY} onChange={(e) => setOffY(+e.target.value)} />
-      <div style={{ fontSize: 11, color: "#8B8F98", marginTop: 4 }}>זום פנימה + הזזה = פיקסול של אזור הפנים בלבד</div>
+      <div className="px-label">חיתוך — זום {zoom.toFixed(1)}×</div>
+      <Slider min={10} max={40} value={zoom * 10} onChange={(e) => setZoom(+e.target.value / 10)} />
+      <div className="px-label">מיקום אופקי</div>
+      <Slider min={0} max={100} value={offX} onChange={(e) => setOffX(+e.target.value)} />
+      <div className="px-label">מיקום אנכי</div>
+      <Slider min={0} max={100} value={offY} onChange={(e) => setOffY(+e.target.value)} />
+      <div className="px-hint">זום פנימה + הזזה = פיקסול של אזור הפנים בלבד</div>
     </div>
   );
 
   const adjustControls = (
     <div>
-      <div style={S.label}>בהירות {brightness}</div>
-      <input style={S.slider} type="range" min={-80} max={80} value={brightness} onChange={(e) => setBrightness(+e.target.value)} />
-      <div style={S.label}>ניגודיות {contrast}</div>
-      <input style={S.slider} type="range" min={-80} max={80} value={contrast} onChange={(e) => setContrast(+e.target.value)} />
-      <div style={S.label}>רוויה {saturation}</div>
-      <input style={S.slider} type="range" min={-80} max={80} value={saturation} onChange={(e) => setSaturation(+e.target.value)} />
-      <label style={{ ...S.row, marginTop: 8, fontSize: 14, cursor: "pointer" }}>
-        <input type="checkbox" checked={dither} onChange={(e) => setDither(e.target.checked)} style={{ accentColor: "#FF6600" }} />
+      <div className="px-label">בהירות {brightness}</div>
+      <Slider min={-80} max={80} value={brightness} onChange={(e) => setBrightness(+e.target.value)} />
+      <div className="px-label">ניגודיות {contrast}</div>
+      <Slider min={-80} max={80} value={contrast} onChange={(e) => setContrast(+e.target.value)} />
+      <div className="px-label">רוויה {saturation}</div>
+      <Slider min={-80} max={80} value={saturation} onChange={(e) => setSaturation(+e.target.value)} />
+      <label className="px-switch" style={{ marginTop: 10 }}>
+        <input type="checkbox" checked={dither} onChange={(e) => setDither(e.target.checked)} />
+        <span className="px-track" />
         דיטרינג (מעברי צבע חלקים)
       </label>
     </div>
   );
 
   const colorLegend = counts && (
-    <div>
+    <div className="px-anim">
       <div style={{
         display: "flex", gap: 6,
         flexWrap: isMobile ? "nowrap" : "wrap",
@@ -376,29 +578,29 @@ export default function Editor() {
         WebkitOverflowScrolling: "touch",
       }}>
         {sorted.map(({ c, i }) => (
-          <div key={i} style={S.chip(enabled[i])} onClick={() => toggleColor(i)}>
-            <img src={iconUrl(i)} alt="" style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid rgba(255,255,255,.25)" }} />
+          <div key={i} className={"px-chip" + (enabled[i] ? "" : " is-off")} onClick={() => toggleColor(i)}>
+            <img src={iconUrl(i)} alt="" />
             <span>{c.toLocaleString()}</span>
           </div>
         ))}
         {PALETTE.map((p, i) => !enabled[i] && (
-          <div key={"off" + i} style={S.chip(false)} onClick={() => toggleColor(i)}>
-            <img src={iconUrl(i)} alt="" style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid rgba(255,255,255,.25)" }} />
+          <div key={"off" + i} className="px-chip is-off" onClick={() => toggleColor(i)}>
+            <img src={iconUrl(i)} alt="" />
             <span>כבוי</span>
           </div>
         ))}
       </div>
-      <div style={{ fontSize: 11, color: "#8B8F98", marginTop: 4 }}>לחיצה על אייקון מבטלת את הצבע</div>
+      <div className="px-hint">לחיצה על אייקון מבטלת את הצבע</div>
     </div>
   );
 
   const actionButtons = (
-    <div style={S.row}>
-      <label htmlFor="pbx-file" style={{ ...S.btn, display: "inline-block" }}>העלאת תמונה</label>
-      {img && <button style={S.ghost} onClick={downloadPNG}>הורדת PNG</button>}
+    <div className="px-row">
+      <label htmlFor="pbx-file" className="px-btn"><IcUpload />העלאת תמונה</label>
+      {img && <button className="px-btn-ghost" onClick={downloadPNG}><IcFiles />הורדת PNG</button>}
       {img && (
-        <button style={{ ...S.btn, background: busyPdf ? "#7a3d10" : "#FF6600", width: "100%" }} onClick={makePdf} disabled={busyPdf}>
-          {busyPdf ? "מייצר PDF..." : "יצירת PDF הוראות A3"}
+        <button className="px-btn" style={{ width: "100%" }} onClick={makePdf} disabled={busyPdf}>
+          <IcFiles />{busyPdf ? "מייצר PDF..." : "יצירת PDF הוראות A3"}
         </button>
       )}
     </div>
@@ -410,42 +612,50 @@ export default function Editor() {
         ref={containerRef}
         onPointerDown={onPtrDown} onPointerMove={onPtrMove} onPointerUp={onPtrUp}
         onPointerCancel={onPtrUp} onWheel={onWheel}
-        style={{
-          width: "fit-content", maxWidth: "100%",
-          overflow: "hidden", borderRadius: 10,
-          boxShadow: "0 8px 40px rgba(0,0,0,.5)",
-          touchAction: "none",
-          cursor: pZoom > 1 ? "grab" : "zoom-in",
-        }}
+        className="px-canvas-frame"
+        style={{ cursor: revealing ? "default" : pZoom > 1 ? "grab" : "zoom-in" }}
       >
         <canvas ref={canvasRef} style={{ display: "block" }} />
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", width: "100%", maxWidth: 760 }}>
-        <span style={{ fontSize: 12, color: "#8B8F98", whiteSpace: "nowrap" }}>זום {pZoom.toFixed(1)}×</span>
-        <input style={{ flex: 1, accentColor: "#FF6600" }} type="range" min={10} max={Math.round(maxPZoom() * 10)}
-          value={Math.min(pZoom, maxPZoom()) * 10} onChange={(e) => setPZoomClamped(+e.target.value / 10)} />
-        {pZoom > 1 && <button style={{ ...S.ghost, padding: "5px 12px" }} onClick={() => setPZoomClamped(1)}>איפוס</button>}
+        <span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>זום {pZoom.toFixed(1)}×</span>
+        <Slider min={10} max={Math.round(maxPZoom() * 10)}
+          value={Math.min(pZoom, maxPZoom()) * 10} onChange={(e) => setPZoomClamped(+e.target.value / 10)}
+          disabled={revealing} />
+        {pZoom > 1 && <button className="px-btn-ghost px-compact" onClick={() => setPZoomClamped(1)}>איפוס</button>}
       </div>
     </>
   );
 
   const TOOLS = [
-    ["size", "גודל"],
-    ["crop", "חיתוך"],
-    ["adjust", "כוונון"],
-    ["colors", "צבעים"],
-    ["actions", "קבצים"],
+    ["size", "גודל", IcSize],
+    ["crop", "חיתוך", IcCrop],
+    ["adjust", "כוונון", IcAdjust],
+    ["colors", "צבעים", IcColors],
+    ["actions", "קבצים", IcFiles],
   ];
 
+  const emptyState = (dropProps = {}) => (
+    <label className={"px-drop" + (drag ? " is-drag" : "")} {...dropProps}>
+      <BrickHero />
+      <div className="px-drop-title">לחצו כאן לבחירת תמונה</div>
+      <div className="px-drop-sub">
+        {isMobile ? "התמונה תהפוך להדמיית בריקס חיה" : "או גררו תמונה לכאן — היא תהפוך להדמיית בריקס חיה"}
+      </div>
+      <div className="px-drop-badge">JPG · PNG · כל תמונה</div>
+      <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => loadFile(e.target.files[0])} />
+    </label>
+  );
+
   return (
-    <div style={S.page}>
-      <div style={S.header}>
-        <span style={{ background: "#FFFFFF", borderRadius: 10, padding: "6px 12px", display: "inline-flex", alignItems: "center" }}>
+    <div className="px-page">
+      <div className={"px-header" + (isMobile ? " is-mobile" : "")}>
+        <span className="px-logo-plate">
           <img src="/assets/logo.png" alt="PicToBrix" style={{ height: isMobile ? 22 : 30, display: "block" }} />
         </span>
         <div style={{ display: "flex", gap: 8, marginInlineStart: "auto" }}>
-          <button style={S.tab(view === "edit")} onClick={() => setView("edit")}>עריכה</button>
-          <button style={S.tab(view === "wall")} onClick={goWall}>הדמיה על קיר</button>
+          <button className={"px-tab" + (view === "edit" ? " is-active" : "")} onClick={() => setView("edit")}><IcEdit />עריכה</button>
+          <button className={"px-tab" + (view === "wall" ? " is-active" : "")} onClick={goWall}><IcWall />הדמיה על קיר</button>
         </div>
       </div>
 
@@ -454,22 +664,17 @@ export default function Editor() {
       {/* ============== MOBILE: image first, tools below ============== */}
       {isMobile && view === "edit" && (
         <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }} ref={stageRef}>
-          {!img ? (
-            <label style={S.drop}>
-              <div style={{ fontSize: 44 }}>🧱</div>
-              <div style={{ fontSize: 17, fontWeight: 700 }}>לחצו כאן לבחירת תמונה</div>
-              <div style={{ fontSize: 13, color: "#8B8F98" }}>התמונה תהפוך להדמיית בריקס חיה</div>
-              <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => loadFile(e.target.files[0])} />
-            </label>
-          ) : (
+          {!img ? emptyState() : (
             <>
               {previewBlock}
-              <div style={{ display: "flex", width: "100%", background: "#23262C", borderRadius: 12, padding: 4 }}>
-                {TOOLS.map(([k, l]) => (
-                  <button key={k} style={S.toolTab(tool === k)} onClick={() => setTool(k)}>{l}</button>
+              <div className="px-tooltabs">
+                {TOOLS.map(([k, l, Ic]) => (
+                  <button key={k} className={"px-tooltab" + (tool === k ? " is-active" : "")} onClick={() => setTool(k)}>
+                    <Ic />{l}
+                  </button>
                 ))}
               </div>
-              <div style={{ width: "100%", background: "#23262C", borderRadius: 12, padding: 14 }}>
+              <div key={tool} className="px-card px-anim">
                 {tool === "size" && sizeControls}
                 {tool === "crop" && cropControls}
                 {tool === "adjust" && adjustControls}
@@ -483,9 +688,9 @@ export default function Editor() {
 
       {/* ============== DESKTOP edit / wall + MOBILE wall ============== */}
       {(!isMobile || view === "wall") && (
-        <div style={S.main}>
+        <div className={"px-main" + (isMobile ? " is-mobile" : "")}>
           {view === "edit" && !isMobile && (
-            <div style={S.panel}>
+            <div className="px-panel">
               {actionButtons}
               {sizeControls}
               {cropControls}
@@ -494,9 +699,9 @@ export default function Editor() {
           )}
 
           {view === "wall" && (
-            <div style={{ ...S.panel, width: isMobile ? "100%" : 320 }}>
+            <div className="px-panel" style={{ width: isMobile ? "100%" : 320 }}>
               <div>
-                <div style={S.label}>בחירת חדר</div>
+                <div className="px-label">בחירת חדר</div>
                 <div style={{
                   display: "flex",
                   flexDirection: isMobile ? "row" : "column",
@@ -504,32 +709,28 @@ export default function Editor() {
                   gap: 8, WebkitOverflowScrolling: "touch",
                 }}>
                   {Object.entries(ROOMS).map(([k, r]) => (
-                    <button key={k} style={{ ...S.sizeBtn(room === k), whiteSpace: "nowrap", padding: "8px 12px", flex: isMobile ? "0 0 auto" : 1 }} onClick={() => setRoom(k)}>{r.label}</button>
+                    <button key={k} className={"px-seg" + (room === k ? " is-active" : "")}
+                      style={{ whiteSpace: "nowrap", padding: "8px 12px", flex: isMobile ? "0 0 auto" : 1 }}
+                      onClick={() => setRoom(k)}>{r.label}</button>
                   ))}
                 </div>
               </div>
-              <div style={{ fontSize: 13, color: "#A9ADB6", lineHeight: 1.6 }}>
+              <div style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.6 }}>
                 {!img && <div style={{ color: "#FFA745", marginBottom: 6 }}>העלו תמונה בלשונית עריכה כדי לראות אותה כאן</div>}
-                התמונה שלך: <b style={{ color: "#EDEDEF" }}>{picW.toFixed(0)} × {picH.toFixed(0)} ס״מ</b> ({boardsW}×{boardsH} לוחות)
+                התמונה שלך: <b style={{ color: "var(--text)" }}>{picW.toFixed(0)} × {picH.toFixed(0)} ס״מ</b> ({boardsW}×{boardsH} לוחות)
                 <br />ההדמיה על צילום אמיתי, בקנה מידה אמיתי לפי הריהוט בחדר.
               </div>
-              <button style={S.ghost} onClick={() => setView("edit")}>חזרה לעריכה ושינוי גודל</button>
+              <button className="px-btn-ghost" onClick={() => setView("edit")}>חזרה לעריכה ושינוי גודל</button>
             </div>
           )}
 
-          <div style={S.stage} ref={view === "wall" || !isMobile ? stageRef : undefined}>
+          <div className="px-stage" ref={view === "wall" || !isMobile ? stageRef : undefined}>
             {view === "edit" && !isMobile && (!img ? (
-              <label
-                style={S.drop}
-                onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-                onDragLeave={() => setDrag(false)}
-                onDrop={(e) => { e.preventDefault(); setDrag(false); loadFile(e.dataTransfer.files[0]); }}
-              >
-                <div style={{ fontSize: 44 }}>🧱</div>
-                <div style={{ fontSize: 17, fontWeight: 700 }}>לחצו כאן לבחירת תמונה</div>
-                <div style={{ fontSize: 13, color: "#8B8F98" }}>או גררו תמונה לכאן — היא תהפוך להדמיית בריקס חיה</div>
-                <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => loadFile(e.target.files[0])} />
-              </label>
+              emptyState({
+                onDragOver: (e) => { e.preventDefault(); setDrag(true); },
+                onDragLeave: () => setDrag(false),
+                onDrop: (e) => { e.preventDefault(); setDrag(false); loadFile(e.dataTransfer.files[0]); },
+              })
             ) : (
               <>
                 {previewBlock}
@@ -537,7 +738,7 @@ export default function Editor() {
               </>
             ))}
             {view === "wall" && (
-              <div style={{ width: stageW, borderRadius: 14, overflow: "hidden", boxShadow: "0 8px 40px rgba(0,0,0,.5)", position: "relative" }}>
+              <div className="px-anim-pop" style={{ width: stageW, borderRadius: 14, overflow: "hidden", boxShadow: "var(--shadow-2)", position: "relative" }}>
                 <RoomScene room={room} stageW={stageW} snapshot={snapshot} picWcm={picW} picHcm={picH} />
                 <div style={{ position: "absolute", bottom: 8, insetInlineStart: 10, background: "rgba(0,0,0,.55)", color: "#fff", fontSize: 12, padding: "4px 10px", borderRadius: 8 }}>
                   {roomCfg.label} • תמונה {picW.toFixed(0)}×{picH.toFixed(0)} ס״מ
