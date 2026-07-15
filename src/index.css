@@ -1,0 +1,4 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: 'Heebo', system-ui, sans-serif; background: #1B1D22; }
+button, select, input, label { font-family: inherit; }
