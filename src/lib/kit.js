@@ -5,15 +5,17 @@
 import { PALETTE, RGB } from "./palette.js";
 import { quantize } from "./bricks.js";
 
-// palette indices (0-based). "Full-40 experiment" mix (chosen by Baruch,
-// July 2026): all 40 official colors in the kit, quantities set by hand per
-// color. Ordered here by quantity (workhorses first) for the inventory display.
+// palette indices (0-based). 37-color mix (Baruch, July 2026): dropped 3
+// near-duplicate pale colors after a 292-image usage audit — cyan #44D1E5,
+// light-green #ABFFAA, light-purple #A285BD (each had a close cousin) — and
+// moved those 45 bricks into 9 pure vivids (15->20) so they stop running out.
+// Ordered by quantity (workhorses first) for the inventory display.
 export const KIT_COLORS = [
   1, 3, 35,                                  // x100 grey, black, dark-brown(fan)
   4, 7, 16, 29, 30, 31, 32, 33, 36, 39,       // x50 skin/neutral family
   0, 2, 12, 15, 17, 18, 28, 37, 38,           // x25 secondary
-  34,                                         // x20 terracotta
-  5, 6, 8, 9, 10, 11, 13, 14, 19, 20, 21, 22, 23, 24, 25, 26, 27, // x15 vivids
+  5, 6, 8, 9, 13, 19, 20, 21, 26, 34,         // x20 vivids + terracotta
+  11, 22, 23, 25, 27,                          // x15 remaining (mint,navy,purple,pink,burgundy)
 ];
 
 // bricks per color in ONE kit (sums to 1,300)
@@ -21,9 +23,8 @@ export const KIT_QTY = {
   1: 100, 3: 100, 35: 100,
   4: 50, 7: 50, 16: 50, 29: 50, 30: 50, 31: 50, 32: 50, 33: 50, 36: 50, 39: 50,
   0: 25, 2: 25, 12: 25, 15: 25, 17: 25, 18: 25, 28: 25, 37: 25, 38: 25,
-  34: 20,
-  5: 15, 6: 15, 8: 15, 9: 15, 10: 15, 11: 15, 13: 15, 14: 15,
-  19: 15, 20: 15, 21: 15, 22: 15, 23: 15, 24: 15, 25: 15, 26: 15, 27: 15,
+  5: 20, 6: 20, 8: 20, 9: 20, 13: 20, 19: 20, 20: 20, 21: 20, 26: 20, 34: 20,
+  11: 15, 22: 15, 23: 15, 25: 15, 27: 15,
 };
 export const KIT_TOTAL = 1300;
 
