@@ -324,6 +324,27 @@ button, select, input, label { font-family: inherit; }
   touch-action: none;
 }
 
+/* kit-mode badge next to the logo */
+.px-kit-badge {
+  background: var(--brand-soft); color: var(--brand);
+  border: 1px solid color-mix(in srgb, var(--brand) 40%, transparent);
+  border-radius: 999px; padding: 4px 12px;
+  font-size: 12.5px; font-weight: 700;
+}
+
+/* paint-color picker chips (manual fix tool) */
+.px-paint {
+  -webkit-tap-highlight-color: transparent;
+  background: var(--inset); border: 2px solid var(--border);
+  border-radius: 9px; padding: 3px; cursor: pointer;
+  display: inline-flex;
+  transition: border-color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.px-paint img { width: 26px; height: 26px; border-radius: 6px; display: block; }
+.px-paint:hover { border-color: var(--text-3); }
+.px-paint:active { transform: scale(0.92); }
+.px-paint.is-active { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+
 /* floating "swap image" chip over the preview */
 .px-swap-btn {
   -webkit-tap-highlight-color: transparent;

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { PALETTE, BOARD, BOARD_CM, iconUrl, textureUrl } from "../lib/palette.js";
-import { quantize, renderGrid } from "../lib/bricks.js";
+import { renderGrid } from "../lib/bricks.js";
+import { KIT_COLORS, KIT_QTY, kitLayouts, autoLevelsStretch, quantizeKit, quantizeMinCount } from "../lib/kit.js";
 import { buildInstructionsPdf, bytesToDataUrl } from "../lib/pdf.js";
 import RoomScene, { ROOMS } from "./RoomScene.jsx";
 
@@ -24,6 +25,8 @@ const IcFiles = () => ic("M7 2v6.5 M4.2 6.2 7 9l2.8-2.8 M2.5 12h9");
 const IcUpload = () => ic("M7 12V5.5 M4.2 8.3 7 5.5l2.8 2.8 M2.5 2h9");
 const IcEdit = () => ic("M9.7 1.8l2.5 2.5L4.5 12H2v-2.5z");
 const IcWall = () => ic("M1.5 2.5h11v9h-11z M4 11.5v-4l2.5 2 3-3 3 3");
+const IcBrush = () => ic("M12.2 1.8c-2.8.7-5 2.6-6.3 4.7l1.6 1.6c2.1-1.3 4-3.5 4.7-6.3z M5 7.5c-1.6.2-2.4 1.4-2.5 3.4-.6.6-1.3.9-1.3.9s2.7 1 4.3-.4c.9-.8 1-2 .5-2.9z");
+const IcKit = () => ic("M1.5 5h11v6.5h-11z M1.5 5l1.2-2.5h8.6L12.5 5 M5.5 7.5h3", <circle cx="4.5" cy="3.8" r="0.01" />);
 
 // the brand brick strip as an empty-state hero: five studs in brick colors
 const BRICK_STRIP = ["#F5AD39", "#F03A42", "#6845A4", "#28914F", "#2564B5"];
@@ -50,10 +53,20 @@ function Slider({ min, max, value, onChange, disabled, color }) {
   );
 }
 
-export default function Editor() {
+export default function Editor({ kit = false }) {
   const [img, setImg] = useState(null);
-  const [boardsW, setBoardsW] = useState(3);
-  const [boardsH, setBoardsH] = useState(3);
+  const [boardsW, setBoardsW] = useState(kit ? 1 : 3);
+  const [boardsH, setBoardsH] = useState(kit ? 1 : 3);
+  const [kits, setKits] = useState(0); // kit mode: number of kits the customer bought (0 = not chosen yet)
+  const [autoLevel, setAutoLevel] = useState(true);
+  const [minCount, setMinCount] = useState(10);
+  const [autoOff, setAutoOff] = useState(() => new Set());
+  const [editOn, setEditOn] = useState(false);
+  const [editColor, setEditColor] = useState(kit ? KIT_COLORS[0] : 3);
+  const [editsVer, setEditsVer] = useState(0);
+  const editsRef = useRef(new Map());   // cell index -> palette index (manual fixes)
+  const undoRef = useRef([]);
+  const lastPaintRef = useRef(-1);
   const [brightness, setBrightness] = useState(0);
   const [contrast, setContrast] = useState(0);
   const [saturation, setSaturation] = useState(0);
@@ -363,6 +376,7 @@ export default function Editor() {
 
   const compute = useCallback(() => {
     if (!img || view !== "edit") return;
+    if (kit && kits === 0) return;
     const W = boardsW * BOARD, H = boardsH * BOARD;
     const off = document.createElement("canvas");
     off.width = W; off.height = H;
@@ -378,6 +392,7 @@ export default function Editor() {
     octx.drawImage(img, sx, sy, cw, ch, 0, 0, W, H);
     const id = octx.getImageData(0, 0, W, H);
     const d = id.data;
+    if (autoLevel || kit) autoLevelsStretch(d);
     const cf = (259 * (contrast + 255)) / (255 * (259 - contrast));
     for (let i = 0; i < d.length; i += 4) {
       let r = cf * (d[i] - 128) + 128 + brightness;
@@ -392,8 +407,21 @@ export default function Editor() {
       d[i + 1] = Math.max(0, Math.min(255, g));
       d[i + 2] = Math.max(0, Math.min(255, b));
     }
-    const grid = quantize(d, W, H, enabled, dither);
+    let grid, aOff = new Set();
+    if (kit) {
+      const allowed = KIT_COLORS.filter((i) => enabled[i]);
+      const budgets = {};
+      for (const i of allowed) budgets[i] = KIT_QTY[i] * kits;
+      grid = quantizeKit(d, W, H, allowed.length >= 2 ? allowed : KIT_COLORS, budgets).grid;
+    } else {
+      const res = quantizeMinCount(d, W, H, enabled, dither, minCount);
+      grid = res.grid;
+      aOff = res.autoOff;
+    }
+    // manual single-stud fixes (pupils, lips, stray bricks)
+    for (const [i, ci] of editsRef.current) if (i < grid.length) grid[i] = ci;
     gridRef.current = { grid, W, H };
+    setAutoOff(aOff);
     const c = new Array(PALETTE.length).fill(0);
     for (let i = 0; i < grid.length; i++) c[grid[i]]++;
     setCounts(c);
@@ -403,7 +431,13 @@ export default function Editor() {
       return;
     }
     schedulePreview();
-  }, [img, view, boardsW, boardsH, brightness, contrast, saturation, dither, zoom, offX, offY, enabled, schedulePreview]);
+  }, [img, view, boardsW, boardsH, brightness, contrast, saturation, dither, zoom, offX, offY, enabled, schedulePreview, kit, kits, autoLevel, minCount, editsVer]);
+
+  // manual fixes are positional — drop them when the underlying crop/size changes
+  useEffect(() => {
+    editsRef.current.clear();
+    undoRef.current = [];
+  }, [img, boardsW, boardsH, zoom, offX, offY]);
 
   useEffect(() => { compute(); }, [compute]);
   useEffect(() => { schedulePreview(); }, [pZoom, textures, schedulePreview]);
@@ -425,6 +459,57 @@ export default function Editor() {
     if (!g) return 8;
     return (previewCssSize().w / g.W) * pZoom;
   };
+  // ---- manual stud fixing (pupils, lips, stray bricks) ----
+  const cellAt = (e) => {
+    const g = gridRef.current, cv = canvasRef.current;
+    if (!g || !cv) return -1;
+    const rect = cv.getBoundingClientRect();
+    if (!rect.width) return -1;
+    const z = Math.max(1, pZoom);
+    const cellCss = (rect.width / g.W) * z;
+    const viewW = g.W / z, viewH = g.H / z;
+    const vp = vpRef.current;
+    const cx = z <= 1 ? g.W / 2 : Math.max(viewW / 2, Math.min(g.W - viewW / 2, vp.cx || g.W / 2));
+    const cy = z <= 1 ? g.H / 2 : Math.max(viewH / 2, Math.min(g.H - viewH / 2, vp.cy || g.H / 2));
+    const x = Math.floor(cx - viewW / 2 + (e.clientX - rect.left) / cellCss);
+    const y = Math.floor(cy - viewH / 2 + (e.clientY - rect.top) / cellCss);
+    if (x < 0 || x >= g.W || y < 0 || y >= g.H) return -1;
+    return y * g.W + x;
+  };
+  const recount = () => {
+    const g = gridRef.current;
+    const c = new Array(PALETTE.length).fill(0);
+    for (let i = 0; i < g.grid.length; i++) c[g.grid[i]]++;
+    setCounts(c);
+  };
+  const paintAt = (e) => {
+    const g = gridRef.current;
+    const i = cellAt(e);
+    if (i < 0 || i === lastPaintRef.current) return;
+    lastPaintRef.current = i;
+    if (g.grid[i] === editColor) return;
+    undoRef.current.push({ i, prevEdit: editsRef.current.has(i) ? editsRef.current.get(i) : null, prevVal: g.grid[i] });
+    editsRef.current.set(i, editColor);
+    g.grid[i] = editColor;
+    recount();
+    schedulePreview();
+  };
+  const undoEdit = () => {
+    const u = undoRef.current.pop();
+    if (!u || !gridRef.current) return;
+    if (u.prevEdit === null) editsRef.current.delete(u.i);
+    else editsRef.current.set(u.i, u.prevEdit);
+    gridRef.current.grid[u.i] = u.prevVal;
+    recount();
+    schedulePreview();
+  };
+  const clearEdits = () => {
+    if (!editsRef.current.size) return;
+    editsRef.current.clear();
+    undoRef.current = [];
+    setEditsVer((v) => v + 1); // recompute from scratch
+  };
+
   const onPtrDown = (e) => {
     if (revealRef.current) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -432,6 +517,8 @@ export default function Editor() {
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
       pinchDist.current = Math.hypot(a.x - b.x, a.y - b.y);
+    } else if (editOn) {
+      paintAt(e);
     }
   };
   const onPtrMove = (e) => {
@@ -444,6 +531,8 @@ export default function Editor() {
       const d = Math.hypot(a.x - b.x, a.y - b.y);
       if (pinchDist.current > 0) setPZoomClamped(pZoom * (d / pinchDist.current));
       pinchDist.current = d;
+    } else if (editOn) {
+      paintAt(e);
     } else if (pZoom > 1) {
       const c = cssCell();
       vpRef.current.cx -= (e.clientX - prev.x) / c;
@@ -454,6 +543,7 @@ export default function Editor() {
   const onPtrUp = (e) => {
     pointers.current.delete(e.pointerId);
     pinchDist.current = 0;
+    lastPaintRef.current = -1;
   };
   const onWheel = (e) => { if (!revealRef.current) setPZoomClamped(pZoom * (1 - e.deltaY * 0.0015)); };
 
@@ -563,10 +653,92 @@ export default function Editor() {
       <div className="px-label">רוויה {saturation}</div>
       <Slider min={-80} max={80} value={saturation} onChange={(e) => setSaturation(+e.target.value)} color="var(--bx-red-lt)" />
       <label className="px-switch" style={{ marginTop: 10 }}>
-        <input type="checkbox" checked={dither} onChange={(e) => setDither(e.target.checked)} />
+        <input type="checkbox" checked={autoLevel} onChange={(e) => setAutoLevel(e.target.checked)} disabled={kit} />
         <span className="px-track" />
-        דיטרינג (מעברי צבע חלקים)
+        כיוון בהירות אוטומטי
       </label>
+      {!kit && (
+        <label className="px-switch" style={{ marginTop: 8 }}>
+          <input type="checkbox" checked={dither} onChange={(e) => setDither(e.target.checked)} />
+          <span className="px-track" />
+          דיטרינג (מעברי צבע חלקים)
+        </label>
+      )}
+    </div>
+  );
+
+  const fixControls = img && (
+    <div>
+      <label className="px-switch">
+        <input type="checkbox" checked={editOn} onChange={(e) => setEditOn(e.target.checked)} />
+        <span className="px-track" />
+        מצב תיקון — לחיצה על התמונה צובעת בריק
+      </label>
+      {editOn && (
+        <>
+          <div className="px-label" style={{ marginTop: 12 }}>צבע לצביעה</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {(kit ? KIT_COLORS : PALETTE.map((_, i) => i).filter((i) => enabled[i])).map((i) => (
+              <button key={i} className={"px-paint" + (editColor === i ? " is-active" : "")}
+                onClick={() => setEditColor(i)} title={PALETTE[i].hex}>
+                <img src={iconUrl(i)} alt={PALETTE[i].hex} />
+              </button>
+            ))}
+          </div>
+          <div className="px-row" style={{ marginTop: 12 }}>
+            <button className="px-btn-ghost px-compact" onClick={undoEdit}>ביטול אחרון</button>
+            <button className="px-btn-ghost px-compact" onClick={clearEdits}>ניקוי כל התיקונים ({editsRef.current.size})</button>
+          </div>
+          <div className="px-hint">מקרבים עם זום, לוחצים על בריק — והוא מוחלף. מושלם לאישונים, שפתיים ופינות שיצאו בצבע לא נכון.</div>
+        </>
+      )}
+    </div>
+  );
+
+  const kitControls = kit && kits > 0 && (
+    <div>
+      <div className="px-label">פריסת {kits} הערכות</div>
+      <div className="px-row">
+        {kitLayouts(kits).map(([w, h]) => (
+          <button key={w + "x" + h} className={"px-seg" + (boardsW === w && boardsH === h ? " is-active" : "")}
+            onClick={() => setBoards(w, h)}>
+            {w}×{h}
+          </button>
+        ))}
+      </div>
+      <div className="px-hint">גודל פיזי: {picW.toFixed(1)} × {picH.toFixed(1)} ס״מ</div>
+      {counts && (
+        <div className="px-row" style={{ marginTop: 10 }}>
+          <div className="px-stat"><div className="px-stat-n" style={{ "--stat-c": "var(--bx-cyan)" }}>{kits}</div><div className="px-stat-l">ערכות</div></div>
+          <div className="px-stat"><div className="px-stat-n" style={{ "--stat-c": "var(--bx-amber)" }}>{totalBrix.toLocaleString()}</div><div className="px-stat-l">בריקסים</div></div>
+          <div className="px-stat"><div className="px-stat-n" style={{ "--stat-c": "var(--bx-lgreen)" }}>{usedColors}</div><div className="px-stat-l">צבעים</div></div>
+        </div>
+      )}
+      <button className="px-btn-ghost px-compact" style={{ marginTop: 10 }} onClick={() => setKits(0)}>שינוי מספר ערכות</button>
+    </div>
+  );
+
+  const kitInventory = kit && counts && (
+    <div>
+      <div className="px-label">מלאי הבריקסים שלך ({kits} ערכות)</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        {KIT_COLORS.map((i) => {
+          const used = counts[i], total = KIT_QTY[i] * kits;
+          const over = used > total;
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <img src={iconUrl(i)} alt="" style={{ width: 20, height: 20, borderRadius: 5, border: "1px solid rgba(255,255,255,.25)" }} />
+              <div style={{ flex: 1, height: 8, background: "var(--inset)", borderRadius: 999, overflow: "hidden" }}>
+                <div style={{ width: Math.min(100, (used / total) * 100) + "%", height: "100%", borderRadius: 999, background: over ? "var(--bx-red)" : PALETTE[i].hex }} />
+              </div>
+              <span style={{ fontSize: 11.5, color: over ? "var(--bx-red-lt)" : "var(--text-3)", minWidth: 62, textAlign: "left", direction: "ltr", fontVariantNumeric: "tabular-nums" }}>
+                {used} / {total}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="px-hint">ההדמיה כבר מותאמת למלאי — מה שרואים על המסך זה בדיוק מה שבונים.</div>
     </div>
   );
 
@@ -586,6 +758,12 @@ export default function Editor() {
             <span>{c.toLocaleString()}</span>
           </div>
         ))}
+        {[...autoOff].map((i) => (
+          <div key={"auto" + i} className="px-chip is-off" title="הוסר אוטומטית — כמות זניחה שלא משנה את התמונה">
+            <img src={iconUrl(i)} alt="" />
+            <span>אוטו</span>
+          </div>
+        ))}
         {PALETTE.map((p, i) => !enabled[i] && (
           <div key={"off" + i} className="px-chip is-off" onClick={() => toggleColor(i)}>
             <img src={iconUrl(i)} alt="" />
@@ -594,6 +772,16 @@ export default function Editor() {
         ))}
       </div>
       <div className="px-hint">לחיצה על אייקון מבטלת את הצבע</div>
+      <div className="px-row" style={{ marginTop: 10 }}>
+        <span style={{ fontSize: 12, color: "var(--text-3)" }}>ביטול צבעים שוליים:</span>
+        <select className="px-select" value={minCount} onChange={(e) => setMinCount(+e.target.value)}>
+          <option value={0}>כבוי</option>
+          <option value={10}>פחות מ-10 בריקסים</option>
+          <option value={25}>פחות מ-25 בריקסים</option>
+          <option value={50}>פחות מ-50 בריקסים</option>
+          <option value={100}>פחות מ-100 בריקסים</option>
+        </select>
+      </div>
     </div>
   );
 
@@ -617,7 +805,7 @@ export default function Editor() {
           onPointerDown={onPtrDown} onPointerMove={onPtrMove} onPointerUp={onPtrUp}
           onPointerCancel={onPtrUp} onWheel={onWheel}
           className="px-canvas-frame"
-          style={{ cursor: revealing ? "default" : pZoom > 1 ? "grab" : "zoom-in" }}
+          style={{ cursor: revealing ? "default" : editOn ? "crosshair" : pZoom > 1 ? "grab" : "zoom-in" }}
         >
           <canvas ref={canvasRef} style={{ display: "block" }} />
         </div>
@@ -634,12 +822,37 @@ export default function Editor() {
   );
 
   const TOOLS = [
-    ["size", "גודל", IcSize, "var(--bx-blue-lt)"],
+    kit ? ["kits", "ערכות", IcKit, "var(--bx-blue-lt)"] : ["size", "גודל", IcSize, "var(--bx-blue-lt)"],
     ["crop", "חיתוך", IcCrop, "var(--bx-lgreen)"],
     ["adjust", "כוונון", IcAdjust, "var(--bx-amber)"],
-    ["colors", "צבעים", IcColors, "var(--bx-red-lt)"],
+    ["fix", "תיקון", IcBrush, "var(--bx-cyan)"],
+    kit ? ["colors", "מלאי", IcColors, "var(--bx-red-lt)"] : ["colors", "צבעים", IcColors, "var(--bx-red-lt)"],
     ["actions", "קבצים", IcFiles, "var(--bx-purple-lt)"],
   ];
+
+  const kitLanding = (
+    <div className="px-card px-anim" style={{ maxWidth: 520, margin: "28px auto 0", textAlign: "center", padding: "30px 22px" }}>
+      <BrickHero />
+      <div style={{ fontSize: 20, fontWeight: 800, marginTop: 10 }}>כמה ערכות יש לכם?</div>
+      <div style={{ fontSize: 13.5, color: "var(--text-2)", lineHeight: 1.7, margin: "8px 0 18px" }}>
+        כל ערכה = לוח אחד ({BOARD_CM.toFixed(1)} ס״מ) + 1,200 בריקסים.<br />
+        ככל שמחברים יותר ערכות — התמונה גדולה וחדה יותר.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, maxWidth: 320, margin: "0 auto" }}>
+        {[1, 2, 3, 4, 6, 8, 9, 12].map((n) => (
+          <button key={n} className="px-seg" style={{ minHeight: 52, fontSize: 17, fontWeight: 700 }}
+            onClick={() => {
+              const [w, h] = kitLayouts(n)[0];
+              pendingRevealRef.current = true;
+              setKits(n); setBoardsW(w); setBoardsH(h);
+            }}>
+            {n}
+          </button>
+        ))}
+      </div>
+      <div className="px-hint" style={{ marginTop: 14 }}>אפשר לשנות את מספר הערכות ואת הפריסה בכל שלב</div>
+    </div>
+  );
 
   const emptyState = (dropProps = {}) => (
     <label className={"px-drop" + (drag ? " is-drag" : "")} {...dropProps}>
@@ -657,6 +870,7 @@ export default function Editor() {
     <div className="px-page">
       <div className={"px-header" + (isMobile ? " is-mobile" : "")}>
         <img src="/assets/logo-white.png" alt="PicToBrix" className="px-logo" style={{ height: isMobile ? 36 : 48 }} />
+        {kit && <span className="px-kit-badge">ערכות</span>}
         <div style={{ display: "flex", gap: 8, marginInlineStart: "auto" }}>
           <button className={"px-tab" + (view === "edit" ? " is-active" : "")} onClick={() => setView("edit")}><IcEdit />עריכה</button>
           <button className={"px-tab" + (view === "wall" ? " is-active" : "")} style={{ "--tab-bg": "var(--bx-green)" }} onClick={goWall}><IcWall />הדמיה על קיר</button>
@@ -669,7 +883,7 @@ export default function Editor() {
       {/* ============== MOBILE: image first, tools below ============== */}
       {isMobile && view === "edit" && (
         <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }} ref={stageRef}>
-          {!img ? emptyState() : (
+          {kit && kits === 0 ? kitLanding : !img ? emptyState() : (
             <>
               {previewBlock}
               <div className="px-tooltabs">
@@ -682,9 +896,11 @@ export default function Editor() {
               </div>
               <div key={tool} className="px-card px-anim">
                 {tool === "size" && sizeControls}
+                {tool === "kits" && kitControls}
                 {tool === "crop" && cropControls}
                 {tool === "adjust" && adjustControls}
-                {tool === "colors" && colorLegend}
+                {tool === "fix" && fixControls}
+                {tool === "colors" && (kit ? kitInventory : colorLegend)}
                 {tool === "actions" && actionButtons}
               </div>
             </>
@@ -695,12 +911,13 @@ export default function Editor() {
       {/* ============== DESKTOP edit / wall + MOBILE wall ============== */}
       {(!isMobile || view === "wall") && (
         <div className={"px-main" + (isMobile ? " is-mobile" : "")}>
-          {view === "edit" && !isMobile && (
+          {view === "edit" && !isMobile && !(kit && kits === 0) && (
             <div className="px-panel">
               {actionButtons}
-              {sizeControls}
+              {kit ? kitControls : sizeControls}
               {cropControls}
               {adjustControls}
+              {fixControls}
             </div>
           )}
 
@@ -731,7 +948,9 @@ export default function Editor() {
           )}
 
           <div className="px-stage" ref={view === "wall" || !isMobile ? stageRef : undefined}>
-            {view === "edit" && !isMobile && (!img ? (
+            {view === "edit" && !isMobile && (kit && kits === 0 ? (
+              <div style={{ width: "100%" }}>{kitLanding}</div>
+            ) : !img ? (
               emptyState({
                 onDragOver: (e) => { e.preventDefault(); setDrag(true); },
                 onDragLeave: () => setDrag(false),
@@ -740,7 +959,7 @@ export default function Editor() {
             ) : (
               <>
                 {previewBlock}
-                <div style={{ maxWidth: 780 }}>{colorLegend}</div>
+                <div style={{ maxWidth: 780, width: "100%" }}>{kit ? kitInventory : colorLegend}</div>
               </>
             ))}
             {view === "wall" && (
