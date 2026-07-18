@@ -5,31 +5,27 @@
 import { PALETTE, RGB } from "./palette.js";
 import { quantize } from "./bricks.js";
 
-// palette indices (0-based) — a subset of the official 40.
-// v1 mix (July 2026 sim, best average quality over the 270-image corpus):
-// 15 colors. We tried a 19-color/1300 "expanded" mix but it spread the bricks
-// too thin (vivid specks, weaker base) and looked worse in real use — reverted.
-export const KIT_COLORS = [3, 30, 29, 35, 1, 28, 4, 16, 0, 2, 19, 5, 21, 13, 10];
+// palette indices (0-based). "Full-40 experiment" mix (chosen by Baruch,
+// July 2026): all 40 official colors in the kit, quantities set by hand per
+// color. Ordered here by quantity (workhorses first) for the inventory display.
+export const KIT_COLORS = [
+  1, 3, 35,                                  // x100 grey, black, dark-brown(fan)
+  4, 7, 16, 29, 30, 31, 32, 33, 36, 39,       // x50 skin/neutral family
+  0, 2, 12, 15, 17, 18, 28, 37, 38,           // x25 secondary
+  34,                                         // x20 terracotta
+  5, 6, 8, 9, 10, 11, 13, 14, 19, 20, 21, 22, 23, 24, 25, 26, 27, // x15 vivids
+];
 
-// bricks per color in ONE kit (sums to 1,200)
+// bricks per color in ONE kit (sums to 1,300)
 export const KIT_QTY = {
-  3: 230,  // #151014 black
-  30: 150, // #FFDAC7 light skin
-  29: 140, // #CBAB94 beige
-  35: 125, // #5C4B44 dark brown
-  1: 115,  // #9C9C9C grey
-  28: 100, // #B5755C tan
-  4: 80,   // #591F0B mahogany
-  16: 75,  // #787355 olive
-  0: 70,   // #FFFFFF white
-  2: 35,   // #5E5E5E dark grey
-  19: 20,  // #FFE001 yellow
-  5: 15,   // #AA0000 red
-  21: 15,  // #006EB5 blue
-  13: 15,  // #01B14C green
-  10: 15,  // #44D1E5 cyan
+  1: 100, 3: 100, 35: 100,
+  4: 50, 7: 50, 16: 50, 29: 50, 30: 50, 31: 50, 32: 50, 33: 50, 36: 50, 39: 50,
+  0: 25, 2: 25, 12: 25, 15: 25, 17: 25, 18: 25, 28: 25, 37: 25, 38: 25,
+  34: 20,
+  5: 15, 6: 15, 8: 15, 9: 15, 10: 15, 11: 15, 13: 15, 14: 15,
+  19: 15, 20: 15, 21: 15, 22: 15, 23: 15, 24: 15, 25: 15, 26: 15, 27: 15,
 };
-export const KIT_TOTAL = 1200;
+export const KIT_TOTAL = 1300;
 
 // board layouts available for N kits: all [w,h] with w*h === N (max side 8)
 export function kitLayouts(n) {
