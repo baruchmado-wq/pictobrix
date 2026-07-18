@@ -76,13 +76,14 @@ const GATE = 55;
 const gated = (pxChroma, pi) => CHROMA[pi] - pxChroma > GATE;
 
 // ---- kit quantization ----
-// 1. serpentine Floyd-Steinberg at reduced strength (full-strength dithering
-//    reads as confetti at single-board scale)
+// 1. serpentine Floyd-Steinberg at a customer-set strength (0 = sharp flat
+//    blocks / clearest; full strength reads as confetti at single-board scale)
 // 2. inventory enforcement: overflow studs move to the cheapest in-stock
 //    alternative, least-visible moves first
-const DITHER_STRENGTH = 0.35;
+export const KIT_DITHER_DEFAULT = 0.35;
 
-export function quantizeKit(data, W, H, allowed, budgets) {
+export function quantizeKit(data, W, H, allowed, budgets, strength = KIT_DITHER_DEFAULT) {
+  const DITHER_STRENGTH = strength;
   const n = W * H;
   const buf = new Float64Array(n * 3);
   for (let i = 0; i < n; i++) {

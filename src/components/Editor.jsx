@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { PALETTE, BOARD, BOARD_CM, iconUrl, textureUrl } from "../lib/palette.js";
 import { renderGrid } from "../lib/bricks.js";
-import { KIT_COLORS, KIT_QTY, kitLayouts, autoLevelsStretch, quantizeKit, quantizeMinCount } from "../lib/kit.js";
+import { KIT_COLORS, KIT_QTY, KIT_DITHER_DEFAULT, kitLayouts, autoLevelsStretch, quantizeKit, quantizeMinCount } from "../lib/kit.js";
 import { saveProject, loadProject, clearProject } from "../lib/store.js";
 import { buildInstructionsPdf, bytesToDataUrl } from "../lib/pdf.js";
 import RoomScene, { ROOMS } from "./RoomScene.jsx";
@@ -63,6 +63,7 @@ export default function Editor({ kit = false }) {
   const [boardsH, setBoardsH] = useState(kit ? 1 : 3);
   const [kits, setKits] = useState(0); // kit mode: number of kits the customer bought (0 = not chosen yet)
   const [autoLevel, setAutoLevel] = useState(true);
+  const [kitDither, setKitDither] = useState(KIT_DITHER_DEFAULT);
   const [minCount, setMinCount] = useState(10);
   const [autoOff, setAutoOff] = useState(() => new Set());
   const [editOn, setEditOn] = useState(false);
@@ -422,7 +423,7 @@ export default function Editor({ kit = false }) {
       const allowed = KIT_COLORS.filter((i) => enabled[i]);
       const budgets = {};
       for (const i of allowed) budgets[i] = KIT_QTY[i] * kits;
-      grid = quantizeKit(d, W, H, allowed.length >= 2 ? allowed : KIT_COLORS, budgets).grid;
+      grid = quantizeKit(d, W, H, allowed.length >= 2 ? allowed : KIT_COLORS, budgets, kitDither).grid;
     } else {
       const res = quantizeMinCount(d, W, H, enabled, dither, minCount);
       grid = res.grid;
@@ -442,7 +443,7 @@ export default function Editor({ kit = false }) {
       return;
     }
     schedulePreview();
-  }, [img, view, boardsW, boardsH, brightness, contrast, saturation, dither, zoom, offX, offY, enabled, schedulePreview, kit, kits, autoLevel, minCount, editsVer]);
+  }, [img, view, boardsW, boardsH, brightness, contrast, saturation, dither, zoom, offX, offY, enabled, schedulePreview, kit, kits, autoLevel, minCount, editsVer, kitDither]);
 
   // manual fixes are positional — drop them when the underlying crop/size changes
   useEffect(() => {
@@ -724,6 +725,16 @@ export default function Editor({ kit = false }) {
           <span className="px-track" />
           דיטרינג (מעברי צבע חלקים)
         </label>
+      )}
+      {kit && (
+        <div style={{ marginTop: 12 }}>
+          <div className="px-label">
+            עוצמת דיטרינג {Math.round(kitDither * 100)}%
+            <span style={{ color: "var(--text-3)", fontWeight: 400 }}> — {kitDither <= 0.1 ? "חד וברור" : kitDither >= 0.55 ? "חלק (עלול לנמר)" : "מאוזן"}</span>
+          </div>
+          <Slider min={0} max={70} value={Math.round(kitDither * 100)} onChange={(e) => setKitDither(+e.target.value / 100)} color="var(--bx-cyan)" />
+          <div className="px-hint">נמוך = בריקסים נקיים וחדים · גבוה = מעברים חלקים אך יותר "רעש". התוצאה הכי ברורה בדרך כלל בצד הנמוך.</div>
+        </div>
       )}
     </div>
   );
