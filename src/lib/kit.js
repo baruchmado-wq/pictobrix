@@ -6,32 +6,30 @@ import { PALETTE, RGB } from "./palette.js";
 import { quantize } from "./bricks.js";
 
 // palette indices (0-based) — a subset of the official 40.
-// v2 mix ("expanded", July 2026 sim13): 19 colors, richer vivid coverage.
-export const KIT_COLORS = [3, 30, 29, 1, 35, 0, 28, 4, 16, 2, 19, 5, 21, 13, 10, 8, 20, 6, 15];
+// v1 mix (July 2026 sim, best average quality over the 270-image corpus):
+// 15 colors. We tried a 19-color/1300 "expanded" mix but it spread the bricks
+// too thin (vivid specks, weaker base) and looked worse in real use — reverted.
+export const KIT_COLORS = [3, 30, 29, 35, 1, 28, 4, 16, 0, 2, 19, 5, 21, 13, 10];
 
-// bricks per color in ONE kit (sums to 1,300)
+// bricks per color in ONE kit (sums to 1,200)
 export const KIT_QTY = {
-  3: 175,  // #151014 black
+  3: 230,  // #151014 black
   30: 150, // #FFDAC7 light skin
-  29: 135, // #CBAB94 beige
-  1: 120,  // #9C9C9C grey
-  35: 115, // #5C4B44 dark brown
-  0: 110,  // #FFFFFF white
+  29: 140, // #CBAB94 beige
+  35: 125, // #5C4B44 dark brown
+  1: 115,  // #9C9C9C grey
   28: 100, // #B5755C tan
-  4: 100,  // #591F0B mahogany
-  16: 40,  // #787355 olive
+  4: 80,   // #591F0B mahogany
+  16: 75,  // #787355 olive
+  0: 70,   // #FFFFFF white
   2: 35,   // #5E5E5E dark grey
-  19: 25,  // #FFE001 yellow
-  5: 25,   // #AA0000 red
-  21: 25,  // #006EB5 blue
-  13: 25,  // #01B14C green
-  10: 25,  // #44D1E5 cyan
-  8: 25,   // #FF6600 orange (brand!)
-  20: 25,  // #5EA5F5 sky blue
-  6: 25,   // #E44F63 coral
-  15: 20,  // #638263 sage green
+  19: 20,  // #FFE001 yellow
+  5: 15,   // #AA0000 red
+  21: 15,  // #006EB5 blue
+  13: 15,  // #01B14C green
+  10: 15,  // #44D1E5 cyan
 };
-export const KIT_TOTAL = 1300;
+export const KIT_TOTAL = 1200;
 
 // board layouts available for N kits: all [w,h] with w*h === N (max side 8)
 export function kitLayouts(n) {
