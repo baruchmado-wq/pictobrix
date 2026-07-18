@@ -5,28 +5,33 @@
 import { PALETTE, RGB } from "./palette.js";
 import { quantize } from "./bricks.js";
 
-// palette indices (0-based) — a subset of the official 40
-export const KIT_COLORS = [3, 30, 29, 35, 1, 28, 4, 16, 0, 2, 19, 5, 21, 13, 10];
+// palette indices (0-based) — a subset of the official 40.
+// v2 mix ("expanded", July 2026 sim13): 19 colors, richer vivid coverage.
+export const KIT_COLORS = [3, 30, 29, 1, 35, 0, 28, 4, 16, 2, 19, 5, 21, 13, 10, 8, 20, 6, 15];
 
-// bricks per color in ONE kit (sums to 1,200)
+// bricks per color in ONE kit (sums to 1,300)
 export const KIT_QTY = {
-  3: 230,  // #151014 black
+  3: 175,  // #151014 black
   30: 150, // #FFDAC7 light skin
-  29: 140, // #CBAB94 beige
-  35: 125, // #5C4B44 dark brown
-  1: 115,  // #9C9C9C grey
+  29: 135, // #CBAB94 beige
+  1: 120,  // #9C9C9C grey
+  35: 115, // #5C4B44 dark brown
+  0: 110,  // #FFFFFF white
   28: 100, // #B5755C tan
-  4: 80,   // #591F0B mahogany
-  16: 75,  // #787355 olive
-  0: 70,   // #FFFFFF white
+  4: 100,  // #591F0B mahogany
+  16: 40,  // #787355 olive
   2: 35,   // #5E5E5E dark grey
-  19: 20,  // #FFE001 yellow
-  5: 15,   // #AA0000 red
-  21: 15,  // #006EB5 blue
-  13: 15,  // #01B14C green
-  10: 15,  // #44D1E5 cyan
+  19: 25,  // #FFE001 yellow
+  5: 25,   // #AA0000 red
+  21: 25,  // #006EB5 blue
+  13: 25,  // #01B14C green
+  10: 25,  // #44D1E5 cyan
+  8: 25,   // #FF6600 orange (brand!)
+  20: 25,  // #5EA5F5 sky blue
+  6: 25,   // #E44F63 coral
+  15: 20,  // #638263 sage green
 };
-export const KIT_TOTAL = 1200;
+export const KIT_TOTAL = 1300;
 
 // board layouts available for N kits: all [w,h] with w*h === N (max side 8)
 export function kitLayouts(n) {
@@ -66,6 +71,12 @@ function pdist2(r, g, b, pi) {
   return (2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db;
 }
 
+// chroma gate: a brick may not be much "louder" than the pixel it stands for.
+// Kills vivid confetti on skin, skies and other near-neutral areas.
+const CHROMA = RGB.map(([r, g, b]) => Math.max(r, g, b) - Math.min(r, g, b));
+const GATE = 55;
+const gated = (pxChroma, pi) => CHROMA[pi] - pxChroma > GATE;
+
 // ---- kit quantization ----
 // 1. serpentine Floyd-Steinberg at reduced strength (full-strength dithering
 //    reads as confetti at single-board scale)
@@ -88,12 +99,15 @@ export function quantizeKit(data, W, H, allowed, budgets) {
       const x = ltr ? k : W - 1 - k;
       const i = y * W + x;
       const r = buf[i * 3], g = buf[i * 3 + 1], b = buf[i * 3 + 2];
-      let best = allowed[0], bd = Infinity;
+      const pxChroma = Math.max(r, g, b) - Math.min(r, g, b);
+      let best = -1, bd = Infinity;
       for (const pi of allowed) {
+        if (gated(pxChroma, pi)) continue;
         const p = RGB[pi];
         const d = (r - p[0]) * (r - p[0]) + (g - p[1]) * (g - p[1]) + (b - p[2]) * (b - p[2]);
         if (d < bd) { bd = d; best = pi; }
       }
+      if (best === -1) best = allowed[0]; // safety: gate can never empty a mix with neutrals
       grid[i] = best;
       const p = RGB[best];
       const er = (r - p[0]) * DITHER_STRENGTH, eg = (g - p[1]) * DITHER_STRENGTH, eb = (b - p[2]) * DITHER_STRENGTH;
@@ -126,11 +140,20 @@ export function quantizeKit(data, W, H, allowed, budgets) {
       const from = grid[i];
       if (over[from] <= 0) continue;
       const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+      const pxChroma = Math.max(r, g, b) - Math.min(r, g, b);
       let alt = -1, ad = Infinity;
       for (const pj of allowed) {
         if (pj === from || cap[pj] <= 0) continue;
+        if (gated(pxChroma, pj)) continue;
         const d = pdist2(r, g, b, pj);
         if (d < ad) { ad = d; alt = pj; }
+      }
+      if (alt === -1) { // gate left nothing in stock — allow anything in stock
+        for (const pj of allowed) {
+          if (pj === from || cap[pj] <= 0) continue;
+          const d = pdist2(r, g, b, pj);
+          if (d < ad) { ad = d; alt = pj; }
+        }
       }
       if (alt !== -1) cands.push({ i, alt, extra: ad - pdist2(r, g, b, from) });
     }

@@ -924,7 +924,7 @@ export default function Editor({ kit = false }) {
       <BrickHero />
       <div style={{ fontSize: 20, fontWeight: 800, marginTop: 10 }}>כמה ערכות יש לכם?</div>
       <div style={{ fontSize: 13.5, color: "var(--text-2)", lineHeight: 1.7, margin: "8px 0 18px" }}>
-        כל ערכה = לוח אחד ({BOARD_CM.toFixed(1)} ס״מ) + 1,200 בריקסים.<br />
+        כל ערכה = לוח אחד ({BOARD_CM.toFixed(1)} ס״מ) + 1,300 בריקסים ב-19 צבעים.<br />
         ככל שמחברים יותר ערכות — התמונה גדולה וחדה יותר.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, maxWidth: 320, margin: "0 auto" }}>
