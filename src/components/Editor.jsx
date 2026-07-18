@@ -969,10 +969,13 @@ export default function Editor({ kit = false }) {
 
   const emptyState = (dropProps = {}) => (
     <label className={"px-drop" + (drag ? " is-drag" : "")} {...dropProps}>
-      <BrickHero />
-      <div className="px-drop-title">לחצו כאן לבחירת תמונה</div>
+      <div className="px-brixi-wrap">
+        <img src="/assets/brixi.png" alt="Brixi" className="px-brixi" draggable="false" />
+        <span className="px-brixi-arrow"><IcUpload /></span>
+      </div>
+      <div className="px-drop-title">לחצו כאן להעלאת תמונה</div>
       <div className="px-drop-sub">
-        {isMobile ? "התמונה תהפוך להדמיית בריקס חיה" : "או גררו תמונה לכאן — היא תהפוך להדמיית בריקס חיה"}
+        {isMobile ? "בריקסי יהפוך את התמונה שלכם לבריקס חי" : "או גררו תמונה לכאן — ובריקסי יהפוך אותה לבריקס חי"}
       </div>
       <div className="px-drop-badge">JPG · PNG · כל תמונה</div>
       <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => loadFile(e.target.files[0])} />
