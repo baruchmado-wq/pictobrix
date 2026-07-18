@@ -2,8 +2,10 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { PALETTE, BOARD, BOARD_CM, iconUrl, textureUrl } from "../lib/palette.js";
 import { renderGrid } from "../lib/bricks.js";
 import { KIT_COLORS, KIT_QTY, kitLayouts, autoLevelsStretch, quantizeKit, quantizeMinCount } from "../lib/kit.js";
+import { saveProject, loadProject, clearProject } from "../lib/store.js";
 import { buildInstructionsPdf, bytesToDataUrl } from "../lib/pdf.js";
 import RoomScene, { ROOMS } from "./RoomScene.jsx";
+import AssemblyView from "./AssemblyView.jsx";
 
 const TEX_PX = 192;
 const REVEAL_PER = 380;    // ms each brick takes to land
@@ -26,6 +28,8 @@ const IcUpload = () => ic("M7 12V5.5 M4.2 8.3 7 5.5l2.8 2.8 M2.5 2h9");
 const IcEdit = () => ic("M9.7 1.8l2.5 2.5L4.5 12H2v-2.5z");
 const IcWall = () => ic("M1.5 2.5h11v9h-11z M4 11.5v-4l2.5 2 3-3 3 3");
 const IcBrush = () => ic("M12.2 1.8c-2.8.7-5 2.6-6.3 4.7l1.6 1.6c2.1-1.3 4-3.5 4.7-6.3z M5 7.5c-1.6.2-2.4 1.4-2.5 3.4-.6.6-1.3.9-1.3.9s2.7 1 4.3-.4c.9-.8 1-2 .5-2.9z");
+const IcList = () => ic("M4.5 3.5h8 M4.5 7h8 M4.5 10.5h8 M1.8 3.5h.4 M1.8 7h.4 M1.8 10.5h.4");
+const IcShare = () => ic("M7 9V1.8 M4.2 4.4 7 1.6l2.8 2.8 M2.5 7.5v4.5h9V7.5");
 const IcKit = () => ic("M1.5 5h11v6.5h-11z M1.5 5l1.2-2.5h8.6L12.5 5 M5.5 7.5h3", <circle cx="4.5" cy="3.8" r="0.01" />);
 
 // the brand brick strip as an empty-state hero: five studs in brick colors
@@ -67,6 +71,11 @@ export default function Editor({ kit = false }) {
   const editsRef = useRef(new Map());   // cell index -> palette index (manual fixes)
   const undoRef = useRef([]);
   const lastPaintRef = useRef(-1);
+  const countsRef = useRef(null);
+  const [paintBlocked, setPaintBlocked] = useState(null); // palette idx whose stock just ran out
+  const [showAssembly, setShowAssembly] = useState(false);
+  const [savedProject, setSavedProject] = useState(() => loadProject(kit ? "kit" : "classic"));
+  const mode = kit ? "kit" : "classic";
   const [brightness, setBrightness] = useState(0);
   const [contrast, setContrast] = useState(0);
   const [saturation, setSaturation] = useState(0);
@@ -424,6 +433,7 @@ export default function Editor({ kit = false }) {
     setAutoOff(aOff);
     const c = new Array(PALETTE.length).fill(0);
     for (let i = 0; i < grid.length; i++) c[grid[i]]++;
+    countsRef.current = c;
     setCounts(c);
     if (pendingRevealRef.current) {
       pendingRevealRef.current = false;
@@ -480,6 +490,7 @@ export default function Editor({ kit = false }) {
     const g = gridRef.current;
     const c = new Array(PALETTE.length).fill(0);
     for (let i = 0; i < g.grid.length; i++) c[g.grid[i]]++;
+    countsRef.current = c;
     setCounts(c);
   };
   const paintAt = (e) => {
@@ -488,6 +499,12 @@ export default function Editor({ kit = false }) {
     if (i < 0 || i === lastPaintRef.current) return;
     lastPaintRef.current = i;
     if (g.grid[i] === editColor) return;
+    // kit mode: hard inventory limit — a color at its cap cannot be painted
+    if (kit && countsRef.current && countsRef.current[editColor] >= KIT_QTY[editColor] * kits) {
+      setPaintBlocked(editColor);
+      return;
+    }
+    setPaintBlocked(null);
     undoRef.current.push({ i, prevEdit: editsRef.current.has(i) ? editsRef.current.get(i) : null, prevVal: g.grid[i] });
     editsRef.current.set(i, editColor);
     g.grid[i] = editColor;
@@ -568,6 +585,7 @@ export default function Editor({ kit = false }) {
     if (!gridRef.current || busyPdf) return;
     setBusyPdf(true);
     try {
+      persistProject();
       const bytes = await buildInstructionsPdf(gridRef.current, boardsW, boardsH, "PictoBrix Project");
       const a = document.createElement("a");
       a.download = "pictobrix-instructions-A3.pdf";
@@ -576,6 +594,48 @@ export default function Editor({ kit = false }) {
     } catch (e) {
       console.error(e);
       alert("שגיאה ביצירת ה-PDF: " + e.message);
+    } finally {
+      setBusyPdf(false);
+    }
+  };
+
+  const persistProject = () => {
+    const g = gridRef.current;
+    if (!g) return null;
+    const p = { grid: g.grid, W: g.W, H: g.H, boardsW, boardsH, kits, progress: savedProject?.progress };
+    saveProject(mode, p);
+    const loaded = loadProject(mode);
+    setSavedProject(loaded);
+    return loaded;
+  };
+
+  const openAssembly = () => {
+    const p = persistProject();
+    if (p) setShowAssembly(true);
+  };
+
+  const resumeAssembly = () => {
+    if (savedProject) setShowAssembly(true);
+  };
+
+  const sharePdf = async () => {
+    if (!gridRef.current || busyPdf) return;
+    setBusyPdf(true);
+    try {
+      persistProject();
+      const bytes = await buildInstructionsPdf(gridRef.current, boardsW, boardsH, "PictoBrix Project");
+      const file = new File([bytes], "pictobrix-instructions-A3.pdf", { type: "application/pdf" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "PicToBrix — הוראות הרכבה" });
+      } else {
+        // no native share on this device — regular download instead
+        const a = document.createElement("a");
+        a.download = file.name;
+        a.href = bytesToDataUrl(bytes, "application/pdf");
+        a.click();
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") console.error(e);
     } finally {
       setBusyPdf(false);
     }
@@ -678,13 +738,30 @@ export default function Editor({ kit = false }) {
         <>
           <div className="px-label" style={{ marginTop: 12 }}>צבע לצביעה</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {(kit ? KIT_COLORS : PALETTE.map((_, i) => i).filter((i) => enabled[i])).map((i) => (
-              <button key={i} className={"px-paint" + (editColor === i ? " is-active" : "")}
-                onClick={() => setEditColor(i)} title={PALETTE[i].hex}>
-                <img src={iconUrl(i)} alt={PALETTE[i].hex} />
-              </button>
-            ))}
+            {(kit ? KIT_COLORS : PALETTE.map((_, i) => i).filter((i) => enabled[i])).map((i) => {
+              const left = kit && counts ? KIT_QTY[i] * kits - counts[i] : null;
+              const depleted = kit && left !== null && left <= 0;
+              return (
+                <div key={i} style={{ textAlign: "center" }}>
+                  <button className={"px-paint" + (editColor === i ? " is-active" : "") + (depleted ? " is-depleted" : "")}
+                    onClick={() => { if (!depleted) { setEditColor(i); setPaintBlocked(null); } }}
+                    title={depleted ? "הצבע נגמר במלאי הערכה" : PALETTE[i].hex}>
+                    <img src={iconUrl(i)} alt={PALETTE[i].hex} />
+                  </button>
+                  {kit && (
+                    <div style={{ fontSize: 10, color: depleted ? "var(--bx-red-lt)" : "var(--text-3)", marginTop: 1, fontVariantNumeric: "tabular-nums" }}>
+                      {depleted ? "נגמר" : left}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
+          {kit && paintBlocked !== null && (
+            <div style={{ marginTop: 10, fontSize: 12.5, color: "var(--bx-red-lt)", fontWeight: 600 }}>
+              ⚠ הצבע הזה נגמר במלאי — כדי להשתמש בו כאן, שחררו בריק שלו במקום אחר (צבעו אותו בצבע שונה).
+            </div>
+          )}
           <div className="px-row" style={{ marginTop: 12 }}>
             <button className="px-btn-ghost px-compact" onClick={undoEdit}>ביטול אחרון</button>
             <button className="px-btn-ghost px-compact" onClick={clearEdits}>ניקוי כל התיקונים ({editsRef.current.size})</button>
@@ -790,10 +867,21 @@ export default function Editor({ kit = false }) {
       <label htmlFor="pbx-file" className="px-btn"><IcUpload />העלאת תמונה</label>
       {img && <button className="px-btn-ghost" onClick={downloadPNG}><IcFiles />הורדת PNG</button>}
       {img && (
-        <button className="px-btn" style={{ width: "100%", "--btn-bg": "var(--bx-blue)" }} onClick={makePdf} disabled={busyPdf}>
-          <IcFiles />{busyPdf ? "מייצר PDF..." : "יצירת PDF הוראות A3"}
+        <button className="px-btn" style={{ width: "100%", "--btn-bg": "var(--bx-green)" }} onClick={openAssembly}>
+          <IcList />הוראות הרכבה במסך — בלי מדפסת
         </button>
       )}
+      {img && (
+        <button className="px-btn" style={{ width: "100%", "--btn-bg": "var(--bx-blue)" }} onClick={makePdf} disabled={busyPdf}>
+          <IcFiles />{busyPdf ? "מייצר PDF..." : "הורדת PDF הוראות A3"}
+        </button>
+      )}
+      {img && (
+        <button className="px-btn-ghost" style={{ width: "100%" }} onClick={sharePdf} disabled={busyPdf}>
+          <IcShare />שליחת ה-PDF לוואטסאפ / מייל — כדי שלא ילך לאיבוד
+        </button>
+      )}
+      {img && <div className="px-hint">ההוראות נשמרות אוטומטית גם במכשיר הזה — אפשר לחזור אליהן מדף הפתיחה.</div>}
     </div>
   );
 
@@ -854,6 +942,19 @@ export default function Editor({ kit = false }) {
     </div>
   );
 
+  const resumeCard = savedProject && !img && (
+    <div className="px-card px-anim" style={{ maxWidth: 760, width: "100%", margin: "0 auto", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ flex: 1, minWidth: 170 }}>
+        <div style={{ fontWeight: 700, fontSize: 14.5 }}>יש לכם הוראות הרכבה שמורות במכשיר הזה</div>
+        <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+          {savedProject.boardsW}×{savedProject.boardsH} לוחות · נשמר ב-{new Date(savedProject.ts).toLocaleDateString("he-IL")}
+        </div>
+      </div>
+      <button className="px-btn" style={{ "--btn-bg": "var(--bx-green)" }} onClick={resumeAssembly}><IcList />המשך הרכבה</button>
+      <button className="px-btn-ghost px-compact" onClick={() => { clearProject(mode); setSavedProject(null); }}>מחיקה</button>
+    </div>
+  );
+
   const emptyState = (dropProps = {}) => (
     <label className={"px-drop" + (drag ? " is-drag" : "")} {...dropProps}>
       <BrickHero />
@@ -880,10 +981,19 @@ export default function Editor({ kit = false }) {
 
       <input id="pbx-file" type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => loadFile(e.target.files[0])} />
 
+      {showAssembly && savedProject && (
+        <AssemblyView
+          project={savedProject}
+          mode={mode}
+          textures={textures}
+          onClose={() => { setShowAssembly(false); setSavedProject(loadProject(mode)); }}
+        />
+      )}
+
       {/* ============== MOBILE: image first, tools below ============== */}
       {isMobile && view === "edit" && (
         <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, alignItems: "center" }} ref={stageRef}>
-          {kit && kits === 0 ? kitLanding : !img ? emptyState() : (
+          {kit && kits === 0 ? <>{resumeCard}{kitLanding}</> : !img ? <>{resumeCard}{emptyState()}</> : (
             <>
               {previewBlock}
               <div className="px-tooltabs">
@@ -949,13 +1059,16 @@ export default function Editor({ kit = false }) {
 
           <div className="px-stage" ref={view === "wall" || !isMobile ? stageRef : undefined}>
             {view === "edit" && !isMobile && (kit && kits === 0 ? (
-              <div style={{ width: "100%" }}>{kitLanding}</div>
+              <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 14 }}>{resumeCard}{kitLanding}</div>
             ) : !img ? (
-              emptyState({
+              <>
+              {resumeCard}
+              {emptyState({
                 onDragOver: (e) => { e.preventDefault(); setDrag(true); },
                 onDragLeave: () => setDrag(false),
                 onDrop: (e) => { e.preventDefault(); setDrag(false); loadFile(e.dataTransfer.files[0]); },
-              })
+              })}
+              </>
             ) : (
               <>
                 {previewBlock}
