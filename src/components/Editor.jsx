@@ -969,11 +969,8 @@ export default function Editor({ kit = false }) {
 
   const emptyState = (dropProps = {}) => (
     <label className={"px-drop" + (drag ? " is-drag" : "")} {...dropProps}>
-      <div className="px-brixi-wrap">
-        <img src="/assets/brixi.png" alt="Brixi" className="px-brixi" draggable="false" />
-        <span className="px-brixi-arrow"><IcUpload /></span>
-      </div>
-      <div className="px-drop-title">לחצו כאן להעלאת תמונה</div>
+      <img src="/assets/brixi.png" alt="Brixi" className="px-brixi" width="423" height="460" fetchpriority="high" draggable="false" />
+      <span className="px-drop-cta"><IcUpload />העלאת תמונה</span>
       <div className="px-drop-sub">
         {isMobile ? "בריקסי יהפוך את התמונה שלכם לבריקס חי" : "או גררו תמונה לכאן — ובריקסי יהפוך אותה לבריקס חי"}
       </div>
@@ -987,7 +984,9 @@ export default function Editor({ kit = false }) {
       <div className={"px-header" + (isMobile ? " is-mobile" : "")}>
         <img src="/assets/logo-white.png" alt="PicToBrix" className="px-logo" style={{ height: isMobile ? 36 : 48 }} />
         {kit && <span className="px-kit-badge">ערכות</span>}
-        <div style={{ display: "flex", gap: 8, marginInlineStart: "auto" }}>
+        <div style={{ display: "flex", gap: 8, marginInlineStart: "auto", alignItems: "center" }}>
+          {/* classic mode only: jump to the retail-kit flow. Kit mode has no way back — one-way by design. */}
+          {!kit && <a href="/kit" className="px-mode-link"><IcKit />ערכות בריקס</a>}
           <button className={"px-tab" + (view === "edit" ? " is-active" : "")} onClick={() => setView("edit")}><IcEdit />עריכה</button>
           <button className={"px-tab" + (view === "wall" ? " is-active" : "")} style={{ "--tab-bg": "var(--bx-green)" }} onClick={goWall}><IcWall />הדמיה על קיר</button>
         </div>
