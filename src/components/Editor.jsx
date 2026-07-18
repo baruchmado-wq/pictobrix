@@ -77,8 +77,9 @@ export default function Editor({ kit = false }) {
   const [savedProject, setSavedProject] = useState(() => loadProject(kit ? "kit" : "classic"));
   const mode = kit ? "kit" : "classic";
   const [brightness, setBrightness] = useState(0);
-  const [contrast, setContrast] = useState(0);
-  const [saturation, setSaturation] = useState(0);
+  const [contrast, setContrast] = useState(kit ? 8 : 0);
+  // kit palette is small, so unboosted photos come out flat — start livelier
+  const [saturation, setSaturation] = useState(kit ? 20 : 0);
   const [dither, setDither] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [offX, setOffX] = useState(50);

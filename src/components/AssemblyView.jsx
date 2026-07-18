@@ -1,19 +1,51 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { PALETTE, BOARD, iconUrl } from "../lib/palette.js";
-import { saveProgress } from "../lib/store.js";
+import { PALETTE, BOARD, iconUrl, textureUrl } from "../lib/palette.js";
+import { saveProgress, saveProject, loadProject } from "../lib/store.js";
+import { boardShareUrl } from "../lib/share.js";
 
 // ===== On-screen assembly instructions =====
 // Row-by-row building guide that replaces the printed PDF on a phone:
 // pick a board, advance row after row; progress is stored with the project.
+// Each board can be shared as a WhatsApp link so the family builds together.
 export default function AssemblyView({ project, mode, textures, onClose }) {
-  const { grid, W, boardsW, boardsH } = project;
+  const { grid, W, boardsW, boardsH, boardLabel } = project;
   const nBoards = boardsW * boardsH;
   const [b, setB] = useState(Math.min(project.progress?.b || 0, nBoards - 1));
   const [row, setRow] = useState(Math.min(project.progress?.row || 0, BOARD - 1));
+  const [shared, setShared] = useState(""); // transient feedback after share/copy
   const boardCvRef = useRef(null);
   const stripCvRef = useRef(null);
 
   useEffect(() => { saveProgress(mode, { b, row }); }, [b, row, mode]);
+
+  // display label: a shared single board keeps its number in the full picture
+  const labelCur = boardLabel ? boardLabel.i + 1 : b + 1;
+  const labelTotal = boardLabel ? boardLabel.n : nBoards;
+
+  const shareBoard = async () => {
+    const url = boardShareUrl(project, b, boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
+    const text = `🧱 הלוח שלך להרכבה (לוח ${labelCur} מתוך ${labelTotal}) — פתחו את הקישור והתחילו לבנות:`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "PicToBrix — הוראות הרכבה", text, url });
+        setShared("נשלח ✓");
+      } else {
+        window.open("https://wa.me/?text=" + encodeURIComponent(text + "\n" + url), "_blank");
+        setShared("");
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") setShared("");
+    }
+    setTimeout(() => setShared(""), 2500);
+  };
+  const copyBoardLink = async () => {
+    const url = boardShareUrl(project, b, boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
+    try {
+      await navigator.clipboard.writeText(url);
+      setShared("הקישור הועתק ✓");
+    } catch { setShared(""); }
+    setTimeout(() => setShared(""), 2500);
+  };
 
   // cell value inside board `bi` at (x, y)
   const cellVal = useCallback((bi, x, y) => {
@@ -102,7 +134,7 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
         <div>
           <div style={{ fontWeight: 800, fontSize: 17 }}>הוראות הרכבה</div>
           <div style={{ fontSize: 12.5, color: "var(--text-3)" }}>
-            לוח {b + 1} מתוך {nBoards} · שורה {row + 1} מתוך {BOARD} · נשמר אוטומטית במכשיר
+            לוח {labelCur} מתוך {labelTotal} · שורה {row + 1} מתוך {BOARD} · נשמר אוטומטית במכשיר
           </div>
         </div>
         <button className="px-btn-ghost px-compact" onClick={onClose}>סגירה</button>
@@ -118,6 +150,21 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
           ))}
         </div>
       )}
+
+      <div className="px-share-row">
+        <div style={{ fontSize: 13, color: "var(--text-2)" }}>
+          {nBoards > 1
+            ? <>מרכיבים ביחד? 👨‍👩‍👧‍👦 שלחו לכל בונה את הלוח שלו — בחרו לוח למעלה ושתפו:</>
+            : <>אפשר לשלוח את ההוראות לטלפון אחר — הקישור הוא ההוראות:</>}
+        </div>
+        <div className="px-row" style={{ gap: 8 }}>
+          <button className="px-btn px-compact-btn" style={{ "--btn-bg": "#25D366" }} onClick={shareBoard}>
+            שיתוף לוח {labelCur} בוואטסאפ
+          </button>
+          <button className="px-btn-ghost px-compact" onClick={copyBoardLink}>העתקת קישור</button>
+          {shared && <span style={{ fontSize: 12.5, color: "var(--bx-lgreen)", fontWeight: 700 }}>{shared}</span>}
+        </div>
+      </div>
 
       <div className="px-assembly-strip-wrap">
         <div className="px-label" style={{ marginBottom: 4 }}>השורה הנוכחית ({row + 1}) — משמאל לימין כמו בתמונה:</div>
@@ -143,6 +190,54 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
           <button className="px-btn" onClick={next}>השורה הבאה</button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ===== recipient side of a shared-board link (#bld=...) =====
+// The link IS the instructions: decode, keep progress on this device, and go
+// straight into the assembly screen. Nothing else to learn.
+export function SharedBuild({ shared }) {
+  const mode = "shared-" + shared.key;
+  const [open, setOpen] = useState(true);
+  const [textures, setTextures] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    Promise.all(
+      PALETTE.map((_, i) => new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = rej;
+        im.src = textureUrl(i);
+      }))
+    ).then((imgs) => { if (alive) setTextures(imgs); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const [project, setProject] = useState(() => {
+    const existing = loadProject(mode);
+    if (existing) return { ...existing, boardLabel: shared.boardLabel };
+    saveProject(mode, shared);
+    return { ...shared, progress: { b: 0, row: 0 } };
+  });
+
+  if (open) {
+    return (
+      <AssemblyView
+        project={project}
+        mode={mode}
+        textures={textures}
+        onClose={() => { setProject({ ...(loadProject(mode) || project), boardLabel: shared.boardLabel }); setOpen(false); }}
+      />
+    );
+  }
+  return (
+    <div className="px-page" dir="rtl" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", gap: 16, padding: 20, textAlign: "center" }}>
+      <img src="/assets/logo-white.png" alt="PicToBrix" style={{ height: 44 }} />
+      <div style={{ fontSize: 18, fontWeight: 800 }}>הלוח שלך מחכה 🧱</div>
+      <div style={{ fontSize: 13.5, color: "var(--text-2)", maxWidth: 300, lineHeight: 1.7 }}>
+        ההתקדמות נשמרת במכשיר הזה. שמרו את ההודעה עם הקישור בוואטסאפ — הקישור הוא ההוראות שלכם.
+      </div>
+      <button className="px-btn" onClick={() => setOpen(true)}>המשך הרכבה — לוח {shared.boardLabel.i + 1}</button>
     </div>
   );
 }

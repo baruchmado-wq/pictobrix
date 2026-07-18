@@ -381,6 +381,12 @@ button, select, input, label { font-family: inherit; }
   padding: 10px 0 4px;
 }
 .px-assembly-nav .px-btn { flex: 1; max-width: 240px; }
+.px-share-row {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.px-compact-btn { min-height: 38px; padding: 7px 14px; font-size: 13.5px; }
 
 /* floating "swap image" chip over the preview */
 .px-swap-btn {
