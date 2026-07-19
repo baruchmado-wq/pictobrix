@@ -969,7 +969,7 @@ export default function Editor({ kit = false }) {
 
   const emptyState = (dropProps = {}) => (
     <label className={"px-drop" + (drag ? " is-drag" : "")} {...dropProps}>
-      <img src="/assets/brixi.png" alt="Brixi" className="px-brixi" width="423" height="460" fetchpriority="high" draggable="false" />
+      <img src="/assets/brixi.png" alt="Brixi" className="px-brixi" width="426" height="480" fetchpriority="high" draggable="false" />
       <span className="px-drop-cta"><IcUpload />העלאת תמונה</span>
       <div className="px-drop-sub">
         {isMobile ? "בריקסי יהפוך את התמונה שלכם לבריקס חי" : "או גררו תמונה לכאן — ובריקסי יהפוך אותה לבריקס חי"}
