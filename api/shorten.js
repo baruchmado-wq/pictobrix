@@ -10,8 +10,14 @@ export default async function handler(req, res) {
   }
 
   const providers = [
+    // is.gd / v.gd redirect straight through (no preview interstitial)
     async () => {
       const r = await fetch("https://is.gd/create.php?format=simple&logstats=0&url=" + encodeURIComponent(url));
+      const t = (await r.text()).trim();
+      return r.ok && t.startsWith("https://") ? t : null;
+    },
+    async () => {
+      const r = await fetch("https://v.gd/create.php?format=simple&logstats=0&url=" + encodeURIComponent(url));
       const t = (await r.text()).trim();
       return r.ok && t.startsWith("https://") ? t : null;
     },
