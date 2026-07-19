@@ -13,6 +13,7 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
   const [b, setB] = useState(Math.min(project.progress?.b || 0, nBoards - 1));
   const [row, setRow] = useState(Math.min(project.progress?.row || 0, BOARD - 1));
   const [shared, setShared] = useState(""); // transient feedback after share/copy
+  const [shortMap, setShortMap] = useState({}); // board index -> shortened url
   const boardCvRef = useRef(null);
   const stripCvRef = useRef(null);
 
@@ -22,8 +23,25 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
   const labelCur = boardLabel ? boardLabel.i + 1 : b + 1;
   const labelTotal = boardLabel ? boardLabel.n : nBoards;
 
+  const longUrl = (bi) => boardShareUrl(project, bi, boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
+
+  // pre-warm a short link for the current board so sharing is instant (calling
+  // the shortener inside the click would break the share/popup user-gesture).
+  useEffect(() => {
+    if (shortMap[b] !== undefined) return;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/shorten?url=" + encodeURIComponent(longUrl(b)));
+        if (r.ok) { const { short } = await r.json(); if (alive && short) setShortMap((m) => ({ ...m, [b]: short })); }
+      } catch { /* leave undefined -> long link used */ }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [b]);
+
   const shareBoard = async () => {
-    const url = boardShareUrl(project, b, boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
+    const url = shortMap[b] || longUrl(b);
     const text = `🧱 הלוח שלך להרכבה (לוח ${labelCur} מתוך ${labelTotal}) — פתחו את הקישור והתחילו לבנות:`;
     try {
       if (navigator.share) {
@@ -39,7 +57,7 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
     setTimeout(() => setShared(""), 2500);
   };
   const copyBoardLink = async () => {
-    const url = boardShareUrl(project, b, boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
+    const url = shortMap[b] || longUrl(b);
     try {
       await navigator.clipboard.writeText(url);
       setShared("הקישור הועתק ✓");
