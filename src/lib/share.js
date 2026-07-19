@@ -56,21 +56,27 @@ export function boardShareUrl(project, bi, meta) {
   bytes[1] = label;
   bytes[2] = n;
   bytes.set(packCells(cells), 3);
-  return `${window.location.origin}/#bld=${b64url(bytes)}`;
+  // Board data goes in a QUERY parameter (not a #fragment): URL shorteners strip
+  // fragments on redirect but keep query params, so short links stay intact.
+  return `${window.location.origin}/kit?b=${b64url(bytes)}`;
 }
 
-// parse a "#bld=..." hash into a single-board project; null if not one / invalid
-export function decodeBoardShare(hash) {
+// parse the board payload (from ?b=... , or legacy #bld=...) into a single-board
+// project; null if not present / invalid.
+export function decodeBoardShare() {
   try {
-    if (!hash || !hash.startsWith("#bld=")) return null;
-    const bytes = unb64url(hash.slice(5));
+    const enc =
+      new URLSearchParams(window.location.search).get("b") ||
+      (window.location.hash.startsWith("#bld=") ? window.location.hash.slice(5) : null);
+    if (!enc) return null;
+    const bytes = unb64url(enc);
     if (bytes[0] !== 1) return null;
     const grid = unpackCells(bytes.subarray(3), BOARD * BOARD);
     for (let i = 0; i < grid.length; i++) if (grid[i] > 39) return null;
     return {
       grid, W: BOARD, H: BOARD, boardsW: 1, boardsH: 1,
       boardLabel: { i: bytes[1], n: bytes[2] },
-      key: hash.slice(5, 25), // stable id for saving progress on this device
+      key: enc.slice(0, 20), // stable id for saving progress on this device
     };
   } catch { return null; }
 }
