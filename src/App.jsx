@@ -1,4 +1,5 @@
 import Editor from './components/Editor.jsx'
+import Gate from './components/Gate.jsx'
 import { SharedBuild } from './components/AssemblyView.jsx'
 import { decodeBoardShare } from './lib/share.js'
 
@@ -11,6 +12,13 @@ const isKit =
   window.location.hash === '#kit'
 
 export default function App() {
+  // customers (kit flow + shared assembly links) are never gated
   if (sharedBoard) return <SharedBuild shared={sharedBoard} />
-  return <Editor key={isKit ? 'kit' : 'classic'} kit={isKit} />
+  if (isKit) return <Editor key="kit" kit />
+  // the classic pro app sits behind a soft password gate
+  return (
+    <Gate>
+      <Editor key="classic" kit={false} />
+    </Gate>
+  )
 }
