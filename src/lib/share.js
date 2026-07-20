@@ -61,8 +61,19 @@ export function boardShareUrl(project, bi, meta) {
   return `${window.location.origin}/kit?b=${b64url(bytes)}`;
 }
 
-// parse the board payload (from ?b=... , or legacy #bld=...) into a single-board
-// project; null if not present / invalid.
+// share url for the WHOLE project (all boards) — format version 2
+export function projectShareUrl(project) {
+  const { grid, boardsW, boardsH } = project;
+  const bytes = new Uint8Array(3 + Math.ceil((grid.length * 6) / 8));
+  bytes[0] = 2; // full-project format
+  bytes[1] = boardsW;
+  bytes[2] = boardsH;
+  bytes.set(packCells(grid), 3);
+  return `${window.location.origin}/kit?b=${b64url(bytes)}`;
+}
+
+// parse the payload (from ?b=... , or legacy #bld=...) into a project; null if
+// not present / invalid. Handles single-board (v1) and full-project (v2).
 export function decodeBoardShare() {
   try {
     const enc =
@@ -70,13 +81,20 @@ export function decodeBoardShare() {
       (window.location.hash.startsWith("#bld=") ? window.location.hash.slice(5) : null);
     if (!enc) return null;
     const bytes = unb64url(enc);
-    if (bytes[0] !== 1) return null;
-    const grid = unpackCells(bytes.subarray(3), BOARD * BOARD);
-    for (let i = 0; i < grid.length; i++) if (grid[i] > 39) return null;
-    return {
-      grid, W: BOARD, H: BOARD, boardsW: 1, boardsH: 1,
-      boardLabel: { i: bytes[1], n: bytes[2] },
-      key: enc.slice(0, 20), // stable id for saving progress on this device
-    };
+    const key = enc.slice(0, 20); // stable id for saving progress on this device
+    if (bytes[0] === 1) {
+      const grid = unpackCells(bytes.subarray(3), BOARD * BOARD);
+      for (let i = 0; i < grid.length; i++) if (grid[i] > 39) return null;
+      return { grid, W: BOARD, H: BOARD, boardsW: 1, boardsH: 1, boardLabel: { i: bytes[1], n: bytes[2] }, key };
+    }
+    if (bytes[0] === 2) {
+      const boardsW = bytes[1], boardsH = bytes[2];
+      if (boardsW < 1 || boardsW > 8 || boardsH < 1 || boardsH > 8) return null;
+      const W = boardsW * BOARD, H = boardsH * BOARD;
+      const grid = unpackCells(bytes.subarray(3), W * H);
+      for (let i = 0; i < grid.length; i++) if (grid[i] > 39) return null;
+      return { grid, W, H, boardsW, boardsH, boardLabel: null, key };
+    }
+    return null;
   } catch { return null; }
 }

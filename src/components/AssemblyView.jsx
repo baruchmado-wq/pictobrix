@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { PALETTE, BOARD, iconUrl } from "../lib/palette.js";
 import { saveProgress, saveProject, loadProject } from "../lib/store.js";
-import { boardShareUrl } from "../lib/share.js";
+import { boardShareUrl, projectShareUrl } from "../lib/share.js";
 
 // ===== On-screen assembly instructions =====
 // Row-by-row building guide that replaces the printed PDF on a phone:
@@ -42,26 +42,32 @@ export default function AssemblyView({ project, mode, onClose }) {
   const labelCur = boardLabel ? boardLabel.i + 1 : b + 1;
   const labelTotal = boardLabel ? boardLabel.n : nBoards;
 
-  const longUrl = (bi) => boardShareUrl(project, bi, boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
+  const canShareProject = nBoards > 1 && !boardLabel; // designer with the full multi-board project
+  // link builders keyed for the short-link cache: "b<index>" per board, "proj" for the whole project
+  const longUrl = (key) => key === "proj"
+    ? projectShareUrl(project)
+    : boardShareUrl(project, +key.slice(1), boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
 
-  // pre-warm a short link for the current board so sharing is instant (calling
-  // the shortener inside the click would break the share/popup user-gesture).
+  // pre-warm short links (current board + whole project) so sharing is instant —
+  // calling the shortener inside the click would break the share/popup gesture.
   useEffect(() => {
-    if (shortMap[b] !== undefined) return;
+    const keys = ["b" + b, ...(canShareProject ? ["proj"] : [])];
     let alive = true;
-    (async () => {
-      try {
-        const r = await fetch("/api/shorten?url=" + encodeURIComponent(longUrl(b)));
-        if (r.ok) { const { short } = await r.json(); if (alive && short) setShortMap((m) => ({ ...m, [b]: short })); }
-      } catch { /* leave undefined -> long link used */ }
-    })();
+    keys.forEach((key) => {
+      if (shortMap[key] !== undefined) return;
+      (async () => {
+        try {
+          const r = await fetch("/api/shorten?url=" + encodeURIComponent(longUrl(key)));
+          if (r.ok) { const { short } = await r.json(); if (alive && short) setShortMap((m) => ({ ...m, [key]: short })); }
+        } catch { /* leave undefined -> long link used */ }
+      })();
+    });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [b]);
+  }, [b, canShareProject]);
 
-  const shareBoard = async () => {
-    const url = shortMap[b] || longUrl(b);
-    const text = `🧱 הלוח שלך להרכבה (לוח ${labelCur} מתוך ${labelTotal}) — פתחו את הקישור והתחילו לבנות:`;
+  const doShare = async (key, text) => {
+    const url = shortMap[key] || longUrl(key);
     try {
       if (navigator.share) {
         await navigator.share({ title: "PicToBrix — הוראות הרכבה", text, url });
@@ -75,8 +81,12 @@ export default function AssemblyView({ project, mode, onClose }) {
     }
     setTimeout(() => setShared(""), 2500);
   };
+  const shareBoard = () => doShare("b" + b,
+    `🧱 הלוח שלך להרכבה (לוח ${labelCur} מתוך ${labelTotal}) — פתחו את הקישור והתחילו לבנות:`);
+  const shareProject = () => doShare("proj",
+    `🧱 הפרויקט המלא שלנו להרכבה (${nBoards} לוחות) — פתחו את הקישור והתחילו לבנות:`);
   const copyBoardLink = async () => {
-    const url = shortMap[b] || longUrl(b);
+    const url = shortMap["b" + b] || longUrl("b" + b);
     try {
       await navigator.clipboard.writeText(url);
       setShared("הקישור הועתק ✓");
@@ -219,15 +229,21 @@ export default function AssemblyView({ project, mode, onClose }) {
 
       <div className="px-share-row">
         <div style={{ fontSize: 13, color: "var(--text-2)" }}>
-          {nBoards > 1
-            ? <>מרכיבים ביחד? 👨‍👩‍👧‍👦 שלחו לכל בונה את הלוח שלו — בחרו לוח למעלה ושתפו:</>
+          {canShareProject
+            ? <>מרכיבים ביחד? 👨‍👩‍👧‍👦 שתפו את <b>כל הפרויקט</b> לטלפון אחד, או שלחו לכל בונה <b>לוח בודד</b> (בחרו לוח למעלה):</>
             : <>אפשר לשלוח את ההוראות לטלפון אחר — הקישור הוא ההוראות:</>}
         </div>
         <div className="px-row" style={{ gap: 8 }}>
-          <button className="px-btn px-compact-btn" style={{ "--btn-bg": "#25D366" }} onClick={shareBoard}>
-            שיתוף לוח {labelCur} בוואטסאפ
+          {canShareProject && (
+            <button className="px-btn px-compact-btn" style={{ "--btn-bg": "#25D366" }} onClick={shareProject}>
+              שיתוף כל הפרויקט ({nBoards} לוחות)
+            </button>
+          )}
+          <button className={(canShareProject ? "px-btn-ghost" : "px-btn") + " px-compact-btn"}
+            style={canShareProject ? undefined : { "--btn-bg": "#25D366" }} onClick={shareBoard}>
+            שיתוף לוח {labelCur} בלבד
           </button>
-          <button className="px-btn-ghost px-compact" onClick={copyBoardLink}>העתקת קישור</button>
+          <button className="px-btn-ghost px-compact" onClick={copyBoardLink}>העתקת קישור הלוח</button>
           {shared && <span style={{ fontSize: 12.5, color: "var(--bx-lgreen)", fontWeight: 700 }}>{shared}</span>}
         </div>
       </div>

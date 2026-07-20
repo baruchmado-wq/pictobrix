@@ -4,7 +4,7 @@
 export default async function handler(req, res) {
   const url = (req.query.url || "").toString();
   // only shorten our own links — don't act as an open redirect/shortener
-  if (!/^https:\/\/(www\.)?pic2brix\.com\/(#|kit|\?|$)/.test(url) || url.length > 4000) {
+  if (!/^https:\/\/(www\.)?pic2brix\.com\/(#|kit|\?|$)/.test(url) || url.length > 9000) {
     res.status(400).json({ error: "invalid url" });
     return;
   }
