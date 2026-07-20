@@ -43,10 +43,19 @@ export default function AssemblyView({ project, mode, onClose }) {
   const labelTotal = boardLabel ? boardLabel.n : nBoards;
 
   const canShareProject = nBoards > 1 && !boardLabel; // designer with the full multi-board project
+  // a per-open nonce so each share is a distinct URL -> a distinct short link
+  // WhatsApp hasn't seen -> it re-fetches the og preview card (WhatsApp caches
+  // link previews per-URL, so a reused link keeps a stale/blank preview). The
+  // decoder ignores unknown query params like "s".
+  const nonceRef = useRef(null);
+  if (!nonceRef.current) nonceRef.current = Math.random().toString(36).slice(2, 8);
   // link builders keyed for the short-link cache: "b<index>" per board, "proj" for the whole project
-  const longUrl = (key) => key === "proj"
-    ? projectShareUrl(project)
-    : boardShareUrl(project, +key.slice(1), boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
+  const longUrl = (key) => {
+    const u = key === "proj"
+      ? projectShareUrl(project)
+      : boardShareUrl(project, +key.slice(1), boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
+    return u + (u.includes("?") ? "&" : "?") + "s=" + nonceRef.current;
+  };
 
   // fetch (and cache) the short link for a key; returns the short url or null
   const shortenNow = useCallback(async (key, url) => {
