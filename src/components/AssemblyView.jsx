@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { PALETTE, BOARD, iconUrl, textureUrl } from "../lib/palette.js";
+import { PALETTE, BOARD, iconUrl } from "../lib/palette.js";
 import { saveProgress, saveProject, loadProject } from "../lib/store.js";
 import { boardShareUrl } from "../lib/share.js";
 
@@ -7,15 +7,34 @@ import { boardShareUrl } from "../lib/share.js";
 // Row-by-row building guide that replaces the printed PDF on a phone:
 // pick a board, advance row after row; progress is stored with the project.
 // Each board can be shared as a WhatsApp link so the family builds together.
-export default function AssemblyView({ project, mode, textures, onClose }) {
+export default function AssemblyView({ project, mode, onClose }) {
   const { grid, W, boardsW, boardsH, boardLabel } = project;
   const nBoards = boardsW * boardsH;
   const [b, setB] = useState(Math.min(project.progress?.b || 0, nBoards - 1));
   const [row, setRow] = useState(Math.min(project.progress?.row || 0, BOARD - 1));
   const [shared, setShared] = useState(""); // transient feedback after share/copy
   const [shortMap, setShortMap] = useState({}); // board index -> shortened url
+  const [icons, setIcons] = useState(null);  // the numbered color icons (like the PDF)
+  const [strip, setStrip] = useState({ canL: false, canR: true, from: 1, to: 1 });
   const boardCvRef = useRef(null);
   const stripCvRef = useRef(null);
+  const stripScrollRef = useRef(null);
+  const STRIP_CELL = 44; // css px per stud in the row strip
+
+  // assembly reads ICONS, not brick textures — identical colors are told apart
+  // by their icon, exactly like the printed PDF
+  useEffect(() => {
+    let alive = true;
+    Promise.all(
+      PALETTE.map((_, i) => new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = rej;
+        im.src = iconUrl(i);
+      }))
+    ).then((imgs) => { if (alive) setIcons(imgs); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => { saveProgress(mode, { b, row }); }, [b, row, mode]);
 
@@ -87,7 +106,7 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
     for (let y = 0; y < BOARD; y++) {
       for (let x = 0; x < BOARD; x++) {
         const v = cellVal(b, x, y);
-        if (textures) ctx.drawImage(textures[v], x * cell, y * cell, cell + 0.5, cell + 0.5);
+        if (icons) ctx.drawImage(icons[v], x * cell, y * cell, cell + 0.5, cell + 0.5);
         else { ctx.fillStyle = PALETTE[v].hex; ctx.fillRect(x * cell, y * cell, cell + 0.5, cell + 0.5); }
       }
     }
@@ -105,29 +124,58 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
     ctx.strokeStyle = "#FF6600";
     ctx.lineWidth = Math.max(2, cell / 5);
     ctx.strokeRect(ctx.lineWidth / 2, row * cell + ctx.lineWidth / 2, cv.width - ctx.lineWidth, cell - ctx.lineWidth);
-  }, [b, row, cellVal, textures]);
+  }, [b, row, cellVal, icons]);
 
-  // ---- current-row strip: enlarged cells ----
+  // ---- current-row strip: large icon cells + position numbers (PDF style) ----
+  const NUM_H = 16; // css px for the position-number band under the cells
   useEffect(() => {
     const cv = stripCvRef.current;
     if (!cv) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const cell = 30 * dpr;
-    cv.width = cell * BOARD; cv.height = cell;
-    cv.style.width = 30 * BOARD + "px";
-    cv.style.height = "30px";
+    const cell = STRIP_CELL * dpr, numH = NUM_H * dpr;
+    cv.width = cell * BOARD; cv.height = cell + numH;
+    cv.style.width = STRIP_CELL * BOARD + "px";
+    cv.style.height = (STRIP_CELL + NUM_H) + "px";
     const ctx = cv.getContext("2d");
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     for (let x = 0; x < BOARD; x++) {
       const v = cellVal(b, x, row);
-      if (textures) ctx.drawImage(textures[v], x * cell, 0, cell + 0.5, cell);
+      if (icons) ctx.drawImage(icons[v], x * cell, 0, cell + 0.5, cell);
       else { ctx.fillStyle = PALETTE[v].hex; ctx.fillRect(x * cell, 0, cell + 0.5, cell); }
-      ctx.strokeStyle = "rgba(255,255,255,0.3)";
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
       ctx.lineWidth = 1;
       ctx.strokeRect(x * cell + 0.5, 0.5, cell - 1, cell - 1);
+      // position number under every stud so builders never lose their place
+      ctx.fillStyle = x % 5 === 4 ? "#FF6600" : "rgba(160,164,172,0.9)";
+      ctx.font = `${x % 5 === 4 ? "bold " : ""}${10 * dpr}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(String(x + 1), x * cell + cell / 2, cell + numH * 0.72);
     }
-  }, [b, row, cellVal, textures]);
+  }, [b, row, cellVal, icons]);
+
+  // ---- strip scroll affordance: arrows + edge fades + live position ----
+  const updateStrip = useCallback(() => {
+    const el = stripScrollRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const x = el.scrollLeft;
+    const from = Math.min(BOARD, Math.floor(x / STRIP_CELL) + 1);
+    const to = Math.max(from, Math.min(BOARD, Math.ceil((x + el.clientWidth) / STRIP_CELL)));
+    setStrip({ canL: x > 4, canR: x < max - 4, from, to });
+  }, []);
+  useEffect(() => {
+    stripScrollRef.current?.scrollTo({ left: 0 }); // each row starts at stud 1
+    updateStrip();
+  }, [b, row, icons, updateStrip]);
+  useEffect(() => {
+    window.addEventListener("resize", updateStrip);
+    return () => window.removeEventListener("resize", updateStrip);
+  }, [updateStrip]);
+  const nudgeStrip = (dir) => {
+    const el = stripScrollRef.current;
+    el?.scrollBy({ left: dir * Math.max(STRIP_CELL * 4, el.clientWidth * 0.6), behavior: "smooth" });
+  };
 
   // per-color counts of the current row
   const rowCounts = {};
@@ -185,8 +233,23 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
       </div>
 
       <div className="px-assembly-strip-wrap">
-        <div className="px-label" style={{ marginBottom: 4 }}>השורה הנוכחית ({row + 1}) — משמאל לימין כמו בתמונה:</div>
-        <div className="px-assembly-strip" dir="ltr"><canvas ref={stripCvRef} /></div>
+        <div className="px-label" style={{ marginBottom: 6 }}>השורה הנוכחית ({row + 1}) — מרכיבים משמאל לימין:</div>
+        <div className="px-strip-outer" dir="ltr">
+          <button className="px-strip-nav" onClick={() => nudgeStrip(-1)} disabled={!strip.canL} aria-label="אחורה בשורה">‹</button>
+          <div className="px-strip-viewport">
+            <div className="px-strip-scroll" ref={stripScrollRef} onScroll={updateStrip}>
+              <canvas ref={stripCvRef} />
+            </div>
+            <div className={"px-strip-fade left" + (strip.canL ? " show" : "")} />
+            <div className={"px-strip-fade right" + (strip.canR ? " show" : "")} />
+          </div>
+          <button className="px-strip-nav" onClick={() => nudgeStrip(1)} disabled={!strip.canR} aria-label="קדימה בשורה">›</button>
+        </div>
+        <div className="px-strip-count">
+          {strip.canR || strip.canL
+            ? <>מציג בריקסים <b>{strip.from}–{strip.to}</b> מתוך {BOARD} · לחצו על החצים או החליקו לצפייה בהמשך ⇄</>
+            : <>כל {BOARD} הבריקסים של השורה מוצגים</>}
+        </div>
         <div className="px-row" style={{ marginTop: 8, gap: 6 }}>
           {Object.entries(rowCounts).sort((a, c) => c[1] - a[1]).map(([v, n]) => (
             <span key={v} className="px-chip" style={{ cursor: "default" }}>
@@ -218,19 +281,6 @@ export default function AssemblyView({ project, mode, textures, onClose }) {
 export function SharedBuild({ shared }) {
   const mode = "shared-" + shared.key;
   const [open, setOpen] = useState(true);
-  const [textures, setTextures] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    Promise.all(
-      PALETTE.map((_, i) => new Promise((res, rej) => {
-        const im = new Image();
-        im.onload = () => res(im);
-        im.onerror = rej;
-        im.src = textureUrl(i);
-      }))
-    ).then((imgs) => { if (alive) setTextures(imgs); }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
   const [project, setProject] = useState(() => {
     const existing = loadProject(mode);
     if (existing) return { ...existing, boardLabel: shared.boardLabel };
@@ -243,7 +293,6 @@ export function SharedBuild({ shared }) {
       <AssemblyView
         project={project}
         mode={mode}
-        textures={textures}
         onClose={() => { setProject({ ...(loadProject(mode) || project), boardLabel: shared.boardLabel }); setOpen(false); }}
       />
     );

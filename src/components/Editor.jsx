@@ -999,7 +999,6 @@ export default function Editor({ kit = false }) {
         <AssemblyView
           project={savedProject}
           mode={mode}
-          textures={textures}
           onClose={() => { setShowAssembly(false); setSavedProject(loadProject(mode)); }}
         />
       )}
