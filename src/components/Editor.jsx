@@ -93,6 +93,7 @@ export default function Editor({ kit = false }) {
   const [room, setRoom] = useState("living");
   const [snapshot, setSnapshot] = useState(null);
   const [busyPdf, setBusyPdf] = useState(false);
+  const [pdfMenu, setPdfMenu] = useState(false);
   const [textures, setTextures] = useState(null);
   const [pZoom, setPZoom] = useState(1);
   const [isMobile, setIsMobile] = useState(false);
@@ -583,16 +584,17 @@ export default function Editor({ kit = false }) {
     a.click();
   };
 
-  const makePdf = async () => {
+  const makePdf = async (format = "A3") => {
     if (!gridRef.current || busyPdf) return;
-    setBusyPdf(true);
+    setBusyPdf(format);
     try {
       persistProject();
-      const bytes = await buildInstructionsPdf(gridRef.current, boardsW, boardsH, "PictoBrix Project");
+      const bytes = await buildInstructionsPdf(gridRef.current, boardsW, boardsH, "PictoBrix Project", format);
       const a = document.createElement("a");
-      a.download = "pictobrix-instructions-A3.pdf";
+      a.download = `pictobrix-instructions-${format}.pdf`;
       a.href = bytesToDataUrl(bytes, "application/pdf");
       a.click();
+      setPdfMenu(false);
     } catch (e) {
       console.error(e);
       alert("שגיאה ביצירת ה-PDF: " + e.message);
@@ -884,16 +886,33 @@ export default function Editor({ kit = false }) {
         </button>
       )}
       {img && (
-        <button className="px-btn" style={{ width: "100%", "--btn-bg": "var(--bx-blue)" }} onClick={makePdf} disabled={busyPdf}>
-          <IcFiles />{busyPdf ? "מייצר PDF..." : "הורדת PDF הוראות A3"}
+        <button className="px-btn" style={{ width: "100%", "--btn-bg": "var(--bx-blue)" }} onClick={() => setPdfMenu((v) => !v)}>
+          <IcFiles />הורד והדפס הוראות הרכבה
         </button>
       )}
+      {img && pdfMenu && (
+        <div className="px-pdf-menu px-anim">
+          <p className="px-pdf-lead">בחרו את גודל הדף להדפסה:</p>
+          <div className="px-pdf-opt">
+            <button className="px-btn" onClick={() => makePdf("A3")} disabled={!!busyPdf}>
+              <IcFiles />{busyPdf === "A3" ? "מייצר..." : "הוראות A3"}
+            </button>
+            <span className="px-pdf-desc"><b>החוויה המלאה 👑</b> — ההוראות מודפסות בגודל אמיתי, כך שאפשר להניח את לוח הבריקס השקוף <b>ישירות על הדף</b>, בריק על בריק, בפרופורציות מדויקות (25.6×25.6 ס״מ).</span>
+          </div>
+          <div className="px-pdf-opt">
+            <button className="px-btn-ghost" onClick={() => makePdf("A4")} disabled={!!busyPdf}>
+              <IcFiles />{busyPdf === "A4" ? "מייצר..." : "הוראות A4"}
+            </button>
+            <span className="px-pdf-desc">אין לכם מדפסת שתומכת ב-A3? הדפיסו על <b>A4 רגיל</b>. ההוראות מלאות וברורות, רק בגודל קטן יותר — בלי הנחת הלוח הישירה.</span>
+          </div>
+        </div>
+      )}
       {img && (
-        <button className="px-btn-ghost" style={{ width: "100%" }} onClick={sharePdf} disabled={busyPdf}>
+        <button className="px-btn-ghost" style={{ width: "100%" }} onClick={sharePdf} disabled={!!busyPdf}>
           <IcShare />שליחת ה-PDF לוואטסאפ / מייל — כדי שלא ילך לאיבוד
         </button>
       )}
-      {img && <div className="px-hint">ההוראות נשמרות אוטומטית גם במכשיר הזה — אפשר לחזור אליהן מדף הפתיחה.</div>}
+      {img && <div className="px-hint">אין מדפסת? אפשר לבנות ישירות מהמסך — "הוראות הרכבה במסך" למעלה. ההוראות גם נשמרות אוטומטית במכשיר.</div>}
     </div>
   );
 

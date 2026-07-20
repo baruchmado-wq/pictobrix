@@ -2,7 +2,7 @@
 // Light because each icon is embedded ONCE as a PDF XObject and reused on every
 // cell (the 2019 system embedded thousands of images), and all content streams
 // are Flate-compressed. No server needed.
-import { RGB, BOARD, textureUrl } from "./palette.js";
+import { RGB, BOARD, BOARD_CM, textureUrl } from "./palette.js";
 
 const PT_W = 841.89, PT_H = 1190.55; // A3 portrait
 const MM = 2.83465;
@@ -101,12 +101,25 @@ const rgbn = (i) => {
   return `${f2(r / 255)} ${f2(g / 255)} ${f2(b / 255)}`;
 };
 
-export async function buildInstructionsPdf(gridData, bw, bh, projectName) {
+export async function buildInstructionsPdf(gridData, bw, bh, projectName, format = "A3") {
   const { grid, W, H } = gridData;
   const icons = await loadIconJpegs();
   const logo = await loadLogoJpeg();
   const ov = await overviewJpeg(grid, W, H);
   const totalPages = bw * bh + 1;
+
+  // The whole layout is authored in A3 coordinates (PT_W × PT_H). For A4 we
+  // keep every layout constant identical and just scale the rendered page down
+  // to A4 via a content-stream transform + a smaller MediaBox — so nothing in
+  // the layout logic changes. (A3 = 1:1 with the real 25.6cm board; A4 is the
+  // shrunk fallback for printers without A3.)
+  const A4 = format === "A4";
+  const pageW = A4 ? 595.28 : PT_W;   // A4 portrait = 210 × 297 mm
+  const pageH = A4 ? 841.89 : PT_H;
+  const pscale = A4 ? pageW / PT_W : 1;
+  // higher precision than f2 here so the whole A3 page maps exactly onto A4
+  const scalePrefix = A4 ? `${pscale.toFixed(5)} 0 0 ${pscale.toFixed(5)} 0 0 cm\n` : "";
+  const mediaBox = `[0 0 ${f2(pageW)} ${f2(pageH)}]`;
 
   const chunks = [];
   let pos = 0;
@@ -199,8 +212,8 @@ export async function buildInstructionsPdf(gridData, bw, bh, projectName) {
     c += ctxt("F1", 9, PT_W / 2, 10 * MM, `PAGE 1/${totalPages}`);
 
     const pid = nextId++, cid = nextId++;
-    await streamObj(cid, "", c);
-    obj(pid, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${f2(PT_W)} ${f2(PT_H)}] /Resources 46 0 R /Contents ${cid} 0 R >>`);
+    await streamObj(cid, "", scalePrefix + c);
+    obj(pid, `<< /Type /Page /Parent 2 0 R /MediaBox ${mediaBox} /Resources 46 0 R /Contents ${cid} 0 R >>`);
     pageObjIds.push(pid);
   }
 
@@ -210,7 +223,9 @@ export async function buildInstructionsPdf(gridData, bw, bh, projectName) {
     for (let bx = 0; bx < bw; bx++) {
       let c = "";
       c += header(150);
-      const gsize = 250 * MM;
+      // grid = the physical board size exactly, so the transparent board lays
+      // straight over the icons on A3 (25.6cm → 8mm per stud)
+      const gsize = BOARD_CM * 10 * MM;
       const cs = gsize / BOARD;
       const gx = (PT_W - gsize) / 2, gyTop = PT_H - 40 * MM;
       for (let y = 0; y < BOARD; y++)
@@ -246,8 +261,8 @@ export async function buildInstructionsPdf(gridData, bw, bh, projectName) {
       c += txt("F1", 9, PT_W - 18 * MM - textW(`PAGE ${pageNo}/${totalPages}`, 9), 10 * MM, `PAGE ${pageNo}/${totalPages}`);
 
       const pid = nextId++, cid = nextId++;
-      await streamObj(cid, "", c);
-      obj(pid, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${f2(PT_W)} ${f2(PT_H)}] /Resources 46 0 R /Contents ${cid} 0 R >>`);
+      await streamObj(cid, "", scalePrefix + c);
+      obj(pid, `<< /Type /Page /Parent 2 0 R /MediaBox ${mediaBox} /Resources 46 0 R /Contents ${cid} 0 R >>`);
       pageObjIds.push(pid);
       pageNo++;
     }

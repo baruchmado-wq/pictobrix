@@ -360,6 +360,18 @@ button, select, input, label { font-family: inherit; }
   touch-action: none;
 }
 
+/* download-and-print PDF chooser (A3 vs A4) */
+.px-pdf-menu {
+  width: 100%; background: var(--inset);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 14px; display: flex; flex-direction: column; gap: 12px;
+}
+.px-pdf-lead { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--text); }
+.px-pdf-opt { display: flex; align-items: flex-start; gap: 11px; }
+.px-pdf-opt > button { flex-shrink: 0; min-width: 108px; align-self: flex-start; }
+.px-pdf-desc { font-size: 12.5px; line-height: 1.55; color: var(--text-2); }
+.px-pdf-desc b { color: var(--text); font-weight: 700; }
+
 /* kit-mode badge next to the logo */
 .px-kit-badge {
   background: var(--brand-soft); color: var(--brand);
