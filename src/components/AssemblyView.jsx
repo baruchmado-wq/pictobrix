@@ -48,22 +48,6 @@ export default function AssemblyView({ project, mode, onClose }) {
     ? projectShareUrl(project)
     : boardShareUrl(project, +key.slice(1), boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
 
-  // preload a Brixi image once so the native share sheet shows it as the
-  // thumbnail (instead of the shortener's own favicon) — must be ready
-  // synchronously inside the share click gesture, hence the prefetch.
-  const shareFileRef = useRef(null);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch("/app-icon-512.png");
-        const blob = await r.blob();
-        if (alive) shareFileRef.current = new File([blob], "pictobrix.png", { type: blob.type || "image/png" });
-      } catch { /* no image -> share link only */ }
-    })();
-    return () => { alive = false; };
-  }, []);
-
   // fetch (and cache) the short link for a key; returns the short url or null
   const shortenNow = useCallback(async (key, url) => {
     try {
@@ -86,18 +70,11 @@ export default function AssemblyView({ project, mode, onClose }) {
     let url = shortMap[key];
     if (!url) { setShared("מכין קישור קצר…"); url = await shortenNow(key, longUrl(key)); }
     url = url || longUrl(key);
-    const title = "PicToBrix — הוראות הרכבה";
-    const file = shareFileRef.current;
+    // share the link only — WhatsApp unfurls it into a preview card showing
+    // Brixi (via og:image). No file attached, so no giant photo / duplicate link.
     try {
-      // prefer sharing the Brixi image alongside the link (when the platform
-      // supports it) so the share preview shows Brixi, not the shortener icon.
-      // With a file attached some targets drop the separate url, so fold it
-      // into the text too.
-      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ title, text: text + "\n" + url, url, files: [file] });
-        setShared("נשלח ✓");
-      } else if (navigator.share) {
-        await navigator.share({ title, text, url });
+      if (navigator.share) {
+        await navigator.share({ title: "PicToBrix — הוראות הרכבה", text, url });
         setShared("נשלח ✓");
       } else {
         window.open("https://wa.me/?text=" + encodeURIComponent(text + "\n" + url), "_blank");
