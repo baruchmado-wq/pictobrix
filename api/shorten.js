@@ -28,15 +28,21 @@ export default async function handler(req, res) {
     },
   ];
 
-  for (const p of providers) {
-    try {
-      const short = await p();
-      if (short) {
-        res.setHeader("Cache-Control", "no-store");
-        res.status(200).json({ short });
-        return;
-      }
-    } catch { /* try next provider */ }
+  // race all providers — first valid short link wins (much faster than trying
+  // them one after another, since is.gd is often slow/flaky)
+  let short = null;
+  try {
+    short = await Promise.any(providers.map(async (p) => {
+      const s = await p();
+      if (!s) throw new Error("empty");
+      return s;
+    }));
+  } catch { short = null; }
+
+  if (short) {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).json({ short });
+    return;
   }
   res.status(502).json({ error: "shorten failed" });
 }

@@ -48,26 +48,28 @@ export default function AssemblyView({ project, mode, onClose }) {
     ? projectShareUrl(project)
     : boardShareUrl(project, +key.slice(1), boardLabel ? { bi: boardLabel.i, n: boardLabel.n } : undefined);
 
-  // pre-warm short links (current board + whole project) so sharing is instant —
-  // calling the shortener inside the click would break the share/popup gesture.
+  // fetch (and cache) the short link for a key; returns the short url or null
+  const shortenNow = useCallback(async (key, url) => {
+    try {
+      const r = await fetch("/api/shorten?url=" + encodeURIComponent(url));
+      if (r.ok) { const { short } = await r.json(); if (short) { setShortMap((m) => ({ ...m, [key]: short })); return short; } }
+    } catch { /* ignore */ }
+    return null;
+  }, []);
+
+  // pre-warm short links (current board + whole project) so sharing is instant.
   useEffect(() => {
     const keys = ["b" + b, ...(canShareProject ? ["proj"] : [])];
-    let alive = true;
-    keys.forEach((key) => {
-      if (shortMap[key] !== undefined) return;
-      (async () => {
-        try {
-          const r = await fetch("/api/shorten?url=" + encodeURIComponent(longUrl(key)));
-          if (r.ok) { const { short } = await r.json(); if (alive && short) setShortMap((m) => ({ ...m, [key]: short })); }
-        } catch { /* leave undefined -> long link used */ }
-      })();
-    });
-    return () => { alive = false; };
+    keys.forEach((key) => { if (shortMap[key] === undefined) shortenNow(key, longUrl(key)); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [b, canShareProject]);
 
   const doShare = async (key, text) => {
-    const url = shortMap[key] || longUrl(key);
+    // use the pre-warmed short link if ready; otherwise fetch it now (fast) so
+    // the sent link is short — only fall back to the long link if shortening fails
+    let url = shortMap[key];
+    if (!url) { setShared("מכין קישור קצר…"); url = await shortenNow(key, longUrl(key)); }
+    url = url || longUrl(key);
     try {
       if (navigator.share) {
         await navigator.share({ title: "PicToBrix — הוראות הרכבה", text, url });
@@ -86,7 +88,9 @@ export default function AssemblyView({ project, mode, onClose }) {
   const shareProject = () => doShare("proj",
     `🧱 הפרויקט המלא שלנו להרכבה (${nBoards} לוחות) — פתחו את הקישור והתחילו לבנות:`);
   const copyBoardLink = async () => {
-    const url = shortMap["b" + b] || longUrl("b" + b);
+    let url = shortMap["b" + b];
+    if (!url) { setShared("מכין קישור קצר…"); url = await shortenNow("b" + b, longUrl("b" + b)); }
+    url = url || longUrl("b" + b);
     try {
       await navigator.clipboard.writeText(url);
       setShared("הקישור הועתק ✓");
